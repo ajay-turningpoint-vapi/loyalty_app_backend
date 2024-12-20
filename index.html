@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>API Server is Running</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #f0f0f0;
+            margin: 0;
+            padding: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+        }
+
+        .container {
+            margin: 20px;
+            text-align: center;
+            padding: 20px;
+            background-color: #fff;
+            border-radius: 10px;
+            box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+
+        h1 {
+            color: rgb(36, 18, 106);
+            margin-bottom: 10px;
+        }
+
+        p {
+            color: #333;
+        }
+
+        /* Make lottie-player responsive and centered */
+        lottie-player {
+            width: 100%;
+            max-width: 300px; /* Adjust the maximum width as needed */
+            height: auto;
+            margin: 20px 0; /* Add margin for spacing */
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>API Server is Running</h1>
+        <script src="https://unpkg.com/@lottiefiles/lottie-player@latest/dist/lottie-player.js"></script>
+        <lottie-player src="https://lottie.host/c2d2ec01-e147-4503-9bbd-6d2cadefc316/Zx4R0qLsaG.json" background="#FFFFFF" speed="1" style="width: 100%; max-width: 300px; height: auto;" loop autoplay direction="1" mode="normal"></lottie-player>
+
+        <p>Your API server is up and running successfully. You can start making requests to the API.</p>
+    </div>
+</body>
+</html>

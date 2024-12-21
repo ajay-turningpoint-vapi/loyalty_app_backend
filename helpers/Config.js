@@ -1,6 +1,6 @@
 import dotenv from "dotenv";
-dotenv.config({ path: "./.env" });
-
+// dotenv.config({ path: "./.env" });
+require('dotenv').config();
 export const CONFIG = {
     MONGOURI: process.env.MONGOURI,
     PORT: process.env.PORT,

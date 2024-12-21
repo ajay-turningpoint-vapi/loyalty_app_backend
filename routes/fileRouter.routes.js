@@ -51,8 +51,6 @@
 
 // module.exports = router;
 
-
-
 const { Router } = require("express");
 const multer = require("multer");
 const multerS3 = require("multer-s3");
@@ -73,7 +71,8 @@ const s3Client = new S3Client({
 const upload = multer({
     storage: multerS3({
         s3: s3Client,
-        bucket: process.env.AWS_S3_BUCKET_NAME,
+        // bucket: process.env.AWS_S3_BUCKET_NAME,
+        bucket: "turningpoint-assets",
         key: (req, file, cb) => {
             const fileExtension = path.extname(file.originalname);
             const fileName = uuidv4() + fileExtension;
@@ -85,12 +84,15 @@ const upload = multer({
     },
 });
 
+
 const cloudFrontDomain = "https://d1m2dthq0rpgme.cloudfront.net";
 
 router.post("/upload", (req, res, next) => {
     if (req.file && req.file.size > 20 * 1024 * 1024) {
         return res.status(400).json({ error: "File size exceeds the limit (20 MB)" });
     }
+
+
 
     upload.array("images")(req, res, (err) => {
         if (err instanceof multer.MulterError) {

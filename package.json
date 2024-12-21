@@ -8,8 +8,6 @@
         "build": "react-scripts build"
     },
     "dependencies": {
-        "@aws-sdk/client-mediaconvert": "^3.714.0",
-        "@aws-sdk/client-s3": "^3.714.0",
         "@googlemaps/google-maps-services-js": "^3.3.42",
         "archiver": "^5.3.1",
         "aws-sdk": "^2.1569.0",

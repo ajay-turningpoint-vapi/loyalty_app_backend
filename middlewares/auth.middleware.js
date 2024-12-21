@@ -1,7 +1,6 @@
 import jwt from "jsonwebtoken";
 import User from "../models/user.model";
 import Token from "../models/token.model";
-require('dotenv').config();
 export const authorizeJwt = async (req, res, next) => {
     const authorization = req.headers["authorization"];
     const token = authorization?.split("Bearer ")[1];

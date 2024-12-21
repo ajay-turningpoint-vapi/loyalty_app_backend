@@ -2,7 +2,6 @@ import { customAlphabet } from "nanoid";
 import User from "../models/user.model";
 import axios from "axios";
 const AWS = require("aws-sdk");
-import { CONFIG } from "../helpers/Config";
 const apiKey = CONFIG.API_KEY;
 require('dotenv').config();
 AWS.config.update({

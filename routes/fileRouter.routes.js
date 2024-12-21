@@ -57,7 +57,7 @@ const multerS3 = require("multer-s3");
 const { v4: uuidv4 } = require("uuid");
 const { S3Client } = require("@aws-sdk/client-s3");
 const path = require("path");
-require('dotenv').config();
+
 const router = Router();
 
 const s3Client = new S3Client({

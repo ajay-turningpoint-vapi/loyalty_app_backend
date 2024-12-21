@@ -38,7 +38,7 @@ import fileRouter from "./routes/fileRouter.routes";
 import activityLogsModel from "./models/activityLogs.model";
 import userModel from "./models/user.model";
 import { sendNotificationMessage } from "./middlewares/fcm.middleware";
-require('dotenv').config();
+
 
 const fs = require("fs");
 const app = express();

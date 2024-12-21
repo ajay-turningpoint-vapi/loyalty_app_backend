@@ -26,7 +26,6 @@ import axios from "axios";
 import otpModel from "../models/otp.model";
 import { autoJoinContest } from "./contest.controller";
 const geolib = require("geolib");
-require('dotenv').config();
 const AWS = require("aws-sdk");
 
 AWS.config.update({

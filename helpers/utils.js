@@ -4,6 +4,7 @@ import axios from "axios";
 const AWS = require("aws-sdk");
 import { CONFIG } from "../helpers/Config";
 const apiKey = CONFIG.API_KEY;
+require('dotenv').config();
 AWS.config.update({
     accessKeyId: process.env.AWS_ACCESS_KEY_ID,
     secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,

@@ -1534,6 +1534,11 @@ export const getUserContestsReport = async (req, res, next) => {
                 $match: matchCondition, // Conditionally match based on search query
             },
             {
+                $addFields: {
+                    rankAsNumber: { $toInt: "$rank" }, // Convert rank from string to integer
+                },
+            },
+            {
                 $project: {
                     userIdObject: 0, // Exclude userIdObject field from output
                     contestIdObject: 0, // Exclude contestIdObject field from output
@@ -1581,7 +1586,7 @@ export const getUserContestsReport = async (req, res, next) => {
                 },
             },
             {
-                $sort: { "userObj.name": 1 }, // Sort by userObj.name in ascending order
+                $sort: { rankAsNumber: 1 }, // Sort by rankAsNumber in ascending order
             },
         ];
 
@@ -2142,10 +2147,7 @@ export const getAllContractors = async (req, res) => {
     }
 };
 
-export const logout = async (req, res) => {
-    console.log(req.user);
-    console.log("test");
-};
+export const logout = async (req, res) => {};
 
 // async (req, res) => {
 //     try {

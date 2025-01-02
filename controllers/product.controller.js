@@ -146,3 +146,13 @@ export const getProductsCategoryWise = async (req, res, next) => {
         next(error);
     }
 };
+
+export const getProductsCount = async (req, res) => {
+    try {
+        const count = await Product.countDocuments();
+        res.json(count);
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ error: "Internal server error" });
+    }
+};

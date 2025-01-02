@@ -45,7 +45,6 @@ export const sendNotification = async (fcmToken, name, message) => {
 };
 
 export const sendNotificationMessage = async (userId, title, message, type) => {
-   
     const user = await userModel.findOne({ _id: userId });
     if (!user || !user.fcmToken) {
         console.log("FCM token not found for user:", userId);
@@ -76,10 +75,9 @@ export const sendNotificationMessage = async (userId, title, message, type) => {
             console.error("FCM token is invalid:", error);
         } else if (error.code == "messaging/registration-token-not-registered") {
             return;
-        }       
-        else {
+        } else {
             //Don't wanna throw any exception in notification sending as of now
-            console.error("Error sending notification:", error.code);
+            console.error("Error sending notification from function block :", error.code, error);
             return;
         }
     }

@@ -27,18 +27,20 @@ import geofenceRouter from "./routes/geofence.routes";
 import reelsLikesRouter from "./routes/ReelLikes.routes";
 import newContractorRouter from "./routes/newContractor.routes";
 import activityLogsRouter from "./routes/activityLogs.routes";
+import promotionRoutes from "./routes/promotion.routes";
 import { format } from "date-fns";
 const schedule = require("node-schedule");
 const { exec } = require("child_process");
 //routes
 import usersRouter from "./routes/users.routes";
 import wishlist from "./routes/wishlist.routes";
-import { checkContest } from "./Services/ContestCron";
+import { checkContest, checkContestWinners } from "./Services/ContestCron";
 import fileRouter from "./routes/fileRouter.routes";
 import activityLogsModel from "./models/activityLogs.model";
 import userModel from "./models/user.model";
 import { sendNotificationMessage } from "./middlewares/fcm.middleware";
-
+import whatsappRoutes from "./routes/whatsapp.routes";
+import { initializeWhatsAppClient } from "./Services/whatsappClient";
 
 const fs = require("fs");
 const app = express();
@@ -54,6 +56,7 @@ mongoose.connect(CONFIG.MONGOURI, { useNewUrlParser: true, useUnifiedTopology: t
         console.log(err);
     } else {
         console.log("connected to db at " + CONFIG.MONGOURI);
+        initializeWhatsAppClient();
     }
 });
 app.use(logger("dev"));
@@ -84,6 +87,8 @@ app.use("/email", emailRouter);
 app.use("/map", geofenceRouter);
 app.use("/logs", activityLogsRouter);
 app.use("/newContractor", newContractorRouter);
+app.use("/whatsapp", whatsappRoutes);
+app.use("/promotions", promotionRoutes);
 app.use("/", fileRouter);
 
 app.get("/backup", async (req, res) => {
@@ -108,8 +113,10 @@ app.get("/backup", async (req, res) => {
 const job = schedule.scheduleJob("*/30 * * * * *", function () {
     let date = format(new Date(), "yyyy-MM-dd");
     let time = format(new Date(), "HH:mm");
+    let time2 = format(new Date(), "HH:mm:ss");
     console.log("RUNNING", date, time);
     checkContest(date, time);
+    checkContestWinners(date, time2);
 });
 
 const activityLogsDeleteJob = schedule.scheduleJob("0 0 * * 0#2", async () => {

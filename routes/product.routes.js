@@ -1,5 +1,5 @@
 import express from "express";
-import { addProduct, deleteProductById, getAllProducts, updateProductById, getActiveProducts, getProductsPubAndTotal, getProductsCategoryWise } from "../controllers/product.controller";
+import { addProduct, deleteProductById, getAllProducts, updateProductById, getActiveProducts, getProductsPubAndTotal, getProductsCategoryWise, getProductsCount } from "../controllers/product.controller";
 
 let router = express.Router();
 
@@ -12,4 +12,6 @@ router.get("/getActiveProducts", getActiveProducts);
 
 router.get("/getPublishAndTotal", getProductsPubAndTotal);
 router.get("/getProductCategoryWise", getProductsCategoryWise);
+router.get("/getProductsCount", getProductsCount);
+
 export default router;

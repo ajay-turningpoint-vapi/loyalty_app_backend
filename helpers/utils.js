@@ -2,8 +2,8 @@ import { customAlphabet } from "nanoid";
 import User from "../models/user.model";
 import axios from "axios";
 const AWS = require("aws-sdk");
+import { CONFIG } from "../helpers/Config";
 const apiKey = CONFIG.API_KEY;
-require('dotenv').config();
 AWS.config.update({
     accessKeyId: process.env.AWS_ACCESS_KEY_ID,
     secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
@@ -164,10 +164,8 @@ export async function sendWhatsAppMessage(templateName, to, body_1, body_2, body
     }
 }
 
-
-
 export async function sendWhatsAppMessageContestWinners(to, contestName, winnersList) {
-    console.log("Winner contest notification:", to, "contestName",contestName,"winner lists", winnersList);
+    console.log("Winner contest notification:", to, "contestName", contestName, "winner lists", winnersList);
 
     const payload = {
         integrated_number: "918200025803",
@@ -200,18 +198,14 @@ export async function sendWhatsAppMessageContestWinners(to, contestName, winners
             },
         },
     };
-    
+
     try {
-        const response = await axios.post(
-            "https://api.msg91.com/api/v5/whatsapp/whatsapp-outbound-message/bulk/",
-            payload,
-            {
-                headers: {
-                    authkey: "418451AzKt9qoMmlL664c674fP1", // Your authkey
-                    "Content-Type": "application/json",
-                },
-            }
-        );
+        const response = await axios.post("https://api.msg91.com/api/v5/whatsapp/whatsapp-outbound-message/bulk/", payload, {
+            headers: {
+                authkey: "418451AzKt9qoMmlL664c674fP1", // Your authkey
+                "Content-Type": "application/json",
+            },
+        });
 
         console.log("WhatsApp message sent successfully:", response.data);
         return response.data;
@@ -220,7 +214,6 @@ export async function sendWhatsAppMessageContestWinners(to, contestName, winners
         throw error; // Re-throw to handle errors upstream
     }
 }
-
 
 export async function sendWhatsAppMessageForBankTransfer(body_1, body_2, body_3, body_4, body_5, body_6) {
     const payload = {
@@ -364,6 +357,42 @@ export async function sendWhatsAppMessageForOTP(phone, otp) {
                                 value: otp,
                             },
                         },
+                    },
+                ],
+            },
+        },
+    };
+    try {
+        const response = await axios.post("https://api.msg91.com/api/v5/whatsapp/whatsapp-outbound-message/bulk/", payload, {
+            headers: {
+                authkey: `418451AzKt9qoMmlL664c674fP1`,
+                "Content-Type": "application/json",
+            },
+        });
+        return response.data;
+    } catch (error) {
+        console.error("Error sending WhatsApp message:", error);
+    }
+}
+
+export async function sendWhatsAppMessageForSessionError() {
+    const payload = {
+        integrated_number: "918200025803",
+        content_type: "template",
+        payload: {
+            messaging_product: "whatsapp",
+            type: "template",
+            template: {
+                name: "whatsapp_failed_log",
+                language: {
+                    code: "en",
+                    policy: "deterministic",
+                },
+                namespace: "19289588_241c_4c3e_ae9c_c7a527b1b4d2",
+                to_and_components: [
+                    {
+                        to: [918975944936],
+                        components: {},
                     },
                 ],
             },

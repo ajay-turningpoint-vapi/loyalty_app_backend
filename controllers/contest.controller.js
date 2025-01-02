@@ -10,6 +10,7 @@ import { sendNotificationMessage } from "../middlewares/fcm.middleware";
 import { sendWhatsAppMessageContestWinners } from "../helpers/utils";
 import prizeModel from "../models/prize.model";
 import moment from "moment";
+import { client } from "../Services/whatsappClient";
 let Contestintial = "TNPC";
 
 function subtractSeconds(timeString, secondsToSubtract) {
@@ -394,16 +395,14 @@ export const getCurrentContest = async (req, res, next) => {
     }
 };
 
-
-
 export const getOpenContests = async (req, res) => {
     const date = "2024-12-20"; // The date to check
     const time = "16-48"; // The time in HH-mm format (adjusting the seconds part for simplicity)
 
     try {
         // Use moment to parse the date and set the start and end of the day (UTC)
-        const startDate = moment(date).startOf('day').toDate();  // Start of the day (UTC)
-        const endDate = moment(date).endOf('day').toDate();      // End of the day (UTC)
+        const startDate = moment(date).startOf("day").toDate(); // Start of the day (UTC)
+        const endDate = moment(date).endOf("day").toDate(); // End of the day (UTC)
 
         // Adjust time format from "16-48" to "16:48" (HH:mm format) to match the database format
         const formattedTime = time.replace("-", ":");
@@ -412,7 +411,7 @@ export const getOpenContests = async (req, res) => {
 
         // Find contests that match criteria
         const openContests = await Contest.find({
-            endTime: formattedTime,  // Match the endTime with the formatted time
+            endTime: formattedTime, // Match the endTime with the formatted time
             endDate: { $gte: startDate, $lte: endDate }, // Match the endDate in the range of the given date (UTC)
             status: "APPROVED",
         }).exec();
@@ -429,8 +428,6 @@ export const getOpenContests = async (req, res) => {
         return res.status(500).json({ message: "Server error." });
     }
 };
-
-
 
 export const getContest = async (req, res, next) => {
     try {
@@ -753,29 +750,32 @@ export const getContestAdmin = async (req, res, next) => {
 
 export const updateById = async (req, res, next) => {
     try {
-        console.log("updaeredsfasdfsadf");
-        if (req.body.image && req.body.image.startsWith("data:")) {
-            req.body.image = await storeFileAndReturnNameBase64(req.body.image);
+        const existingContest = await Contest.findById(req.params.id).exec();
+        if (!existingContest) throw { status: 400, message: "Contest Not Found" };
+
+        // Check if endTime is updated
+        if (req.body.endTime) {
+            const timeString = req.body.endTime + ":00"; // Ensure format is consistent
+            const numberOfPrizes = req.body?.prizeArr?.length || existingContest.prizeArr.length || 0;
+            const newAnimationTime = addSeconds(timeString, numberOfPrizes * 30);
+            req.body.antimationTime = newAnimationTime; // Update animationTime in the body
         }
+
         const ContestObj = await Contest.findByIdAndUpdate(req.params.id, req.body, { new: true }).exec();
         if (!ContestObj) throw { status: 400, message: "Contest Not Found" };
-        console.log(ContestObj);
+
         if (req.body?.prizeArr && req.body?.prizeArr?.length > 0) {
             let rank = 1;
-            console.log("prze loop fdgfdgf");
+            console.log("prze loop");
             for (const prize of req.body?.prizeArr) {
                 let prizeObj = {
                     rank: parseInt(rank),
                     contestId: ContestObj._id,
                     name: prize.name,
                     description: prize.description,
+                    image: prize.image || "",
                 };
 
-                console.log(prizeObj, "przei obj ");
-
-                if (prize.image && prize.image.startsWith("data:")) {
-                    prizeObj.image = await storeFileAndReturnNameBase64(prize.image);
-                }
                 if (prize._id == "") {
                     let prizsObje = await Prize(prizeObj).save();
                 } else {
@@ -1454,102 +1454,6 @@ export const sendContestNotifications = async (req, res, next) => {
     }
 };
 
-const getOrdinal = (num) => {
-    const suffixes = ["th", "st", "nd", "rd"];
-    const value = num % 100;
-    return num + (suffixes[(value - 20) % 10] || suffixes[value] || suffixes[0]);
-};
-
-// Function to convert text to camel case (for contest names)
-const toCamelCase = (str) => {
-    return str
-        .split(" ")
-        .map((word, index) => (index === 0 ? word.charAt(0).toUpperCase() + word.slice(1).toLowerCase() : word.charAt(0).toUpperCase() + word.slice(1).toLowerCase()))
-        .join("");
-};
-
-export const sendContestWinnerNotifications = async (req, res, next) => {
-    const { contestId } = req.params;
-
-    try {
-        // Step 1: Validate contestId
-        if (!contestId) {
-            return res.status(400).json({ message: "Contest ID is required", success: false });
-        }
-
-        // Step 2: Fetch the contest details
-        const contest = await Contest.findById(contestId).select("name").lean();
-        if (!contest) {
-            return res.status(404).json({ message: "Contest not found", success: false });
-        }
-        const contestName = contest.name;
-
-        // Step 3: Fetch and sort winners by rank
-        const winners = await userContest
-            .find({ contestId, status: "win" })
-            .populate("userId", "name") // Populate winner names
-            .sort({ rank: 1 }) // Sort by rank
-            .lean();
-
-        if (!winners.length) {
-            return res.status(404).json({ message: "No winners found for this contest", success: false });
-        }
-
-        // Step 4: Fetch all prizes for the contest based on contestId
-        const prizes = await Prize.find({ contestId }).sort({ rank: 1 }).lean();
-
-        if (!prizes.length) {
-            return res.status(404).json({ message: "No prizes found for this contest", success: false });
-        }
-
-        // Step 5: Fetch all users excluding Admin and Contractor
-        const users = await userModel
-            .find({ name: { $nin: ["Admin User", "Contractor"] } }) // Exclude Admin and Contractor
-            .select("name phone")
-            .lean();
-
-        // Step 6: Send personalized notifications
-        const notifications = {};
-        for (const winner of winners) {
-            // Get the prize based on the winner's rank
-            const prize = prizes.find((p) => p.rank.toString() === winner.rank.toString());
-
-            if (prize) {
-                // Generate title and body with the rank in ordinal format and prize details
-                const title = `🏆🎉 बधाई हो! ${toCamelCase(winner.userId.name)}`;
-                const body = `🎉${toCamelCase(contestName)} लकी ड्रा में आपको 🏆 ${getOrdinal(winner.rank)} इनाम ${prize.name} मिला है! 🎊🎉`;
-
-                // await sendNotificationMessage("6752876af8dc263f5a3e291e", title, body, "winners");
-                for (const user of users) {
-                    try {
-                        // Send notification to each user (use your actual notification function here)
-                        await sendNotificationMessage(user._id, title, body, "winners");
-                        console.log(`Notification sent to ${user._id}: ${title}: ${body}`);
-
-                        // Add notification to results for this user
-                        if (!notifications[user.name]) notifications[user.name] = [];
-                        notifications[user.name].push(body);
-                    } catch (error) {
-                        console.error(`Failed to send notification to ${user.name} (${user.phone}): ${error.message}`);
-                    }
-                }
-            } else {
-                console.log(`No prize found for rank ${winner.rank} in contest ${contestName}`);
-            }
-        }
-
-        // Step 7: Return success response
-        return res.status(200).json({
-            message: "Notifications sent successfully to all users",
-            success: true,
-            notifications,
-        });
-    } catch (err) {
-        console.error(`Error in sendContestWinnerNotifications: ${err.message}`);
-        next(err); // Pass the error to the error handler middleware
-    }
-};
-
 export const getPreviousContestRewards = async (req, res, next) => {
     try {
         // Get the current date and time
@@ -1606,5 +1510,220 @@ export const getPreviousContestRewards = async (req, res, next) => {
     } catch (err) {
         // Handle errors
         next(err);
+    }
+};
+
+const getOrdinal = (num) => {
+    const suffixes = ["th", "st", "nd", "rd"];
+    const value = num % 100;
+    return num + (suffixes[(value - 20) % 10] || suffixes[value] || suffixes[0]);
+};
+
+// Function to convert text to camel case (for contest names)
+const toCamelCase = (str) => {
+    return str
+        .split(" ")
+        .map((word, index) => (index === 0 ? word.charAt(0).toUpperCase() + word.slice(1).toLowerCase() : word.charAt(0).toUpperCase() + word.slice(1).toLowerCase()))
+        .join("");
+};
+
+export const sendContestWinnerNotifications1 = async (req, res, next) => {
+    const { contestId } = req.params;
+
+    try {
+        // Step 1: Validate contestId
+        if (!contestId) {
+            return res.status(400).json({ message: "Contest ID is required", success: false });
+        }
+        // Step 2: Fetch the contest details
+        const contest = await Contest.findById(contestId).select("name").lean();
+        if (!contest) {
+            return res.status(404).json({ message: "Contest not found", success: false });
+        }
+        const contestName = contest.name;
+
+        // Step 3: Fetch and sort winners by rank
+        const winners = await userContest
+            .find({ contestId, status: "win" })
+            .populate("userId", "name") // Populate winner names
+            .lean();
+
+        winners.sort((a, b) => Number(a.rank) - Number(b.rank));
+
+        if (!winners.length) {
+            return res.status(404).json({ message: "No winners found for this contest", success: false });
+        }
+
+        // Step 4: Fetch all prizes for the contest based on contestId
+        const prizes = await Prize.find({ contestId }).sort({ rank: 1 }).lean();
+
+        if (!prizes.length) {
+            return res.status(404).json({ message: "No prizes found for this contest", success: false });
+        }
+
+        console.log("prizes", prizes);
+
+        // Step 5: Fetch all users excluding Admin and Contractor
+        const users = await userModel
+            .find({ name: { $nin: ["Admin User", "Contractor"] } }) // Exclude Admin and Contractor
+            .select("name phone")
+            .lean();
+
+        const clientReady = await isClientReady(); // This function will check if the client is ready
+
+        if (!clientReady) {
+            return res.status(400).json({ message: "Client is not ready to send messages", success: false });
+        }
+
+        for (const winner of winners) {
+            // Get the prize based on the winner's rank
+            const prize = prizes.find((p) => p.rank.toString() === winner.rank.toString());
+
+            if (prize) {
+                console.log("winner", winner);
+
+                // try {
+                //     const number = "918975944936";
+                //     const formattedNumber = `${number}@c.us`;
+                //     const response = await client.sendMessage(formattedNumber, winners);
+
+                //     if (response && response.success) {
+                //         console.log("Message sent successfully");
+                //     } else {
+                //         console.error("Failed to send message:", response.error || response.message);
+                //     }
+                // } catch (error) {
+                //     console.error("Error sending message:", error.message);
+                // }
+
+                for (const user of users) {
+                    try {
+                        // Send notification to each user (use your actual notification function here)
+                        // await sendNotificationMessage(user._id, title, body, "winners");
+                        // console.log(`Notification sent to ${user._id}: ${title}: ${body}`);
+                    } catch (error) {
+                        // console.error(`Failed to send notification to ${user.name} (${user.phone}): ${error.message}`);
+                    }
+                }
+            } else {
+                console.log(`No prize found for rank ${winner.rank} in contest ${contestName}`);
+            }
+        }
+
+        // Step 7: Return success response
+        return res.status(200).json({
+            message: "Notifications sent successfully to all users",
+            success: true,
+        });
+    } catch (err) {
+        console.error(`Error in sendContestWinnerNotifications: ${err.message}`);
+        next(err); // Pass the error to the error handler middleware
+    }
+};
+
+export const sendContestWinnerNotifications = async (req, res, next) => {
+    const { contestId } = req.params;
+
+    try {
+        // Step 1: Validate contestId
+        if (!contestId) {
+            return res.status(400).json({ message: "Contest ID is required", success: false });
+        }
+
+        // Step 2: Fetch the contest details
+        const contest = await Contest.findById(contestId).select("name").lean();
+        if (!contest) {
+            return res.status(404).json({ message: "Contest not found", success: false });
+        }
+        const contestName = contest.name;
+
+        // Step 3: Fetch and sort winners by rank
+        const winners = await userContest
+            .find({ contestId, status: "win" })
+            .populate("userId", "name") // Populate winner names
+            .lean();
+
+        winners.sort((a, b) => Number(a.rank) - Number(b.rank));
+
+        if (!winners.length) {
+            return res.status(404).json({ message: "No winners found for this contest", success: false });
+        }
+
+        // Step 4: Fetch all prizes for the contest based on contestId
+        const prizes = await Prize.find({ contestId }).sort({ rank: 1 }).lean();
+
+        if (!prizes.length) {
+            return res.status(404).json({ message: "No prizes found for this contest", success: false });
+        }
+
+        // Step 5: Generate the consolidated message
+        let message = `🎉CONGRATULATIONS🎉\nLucky Draw: "${toCamelCase(contestName)}" \nWinners: \n\n`;
+        winners.forEach((winner) => {
+            // Find the prize corresponding to the winner's rank
+            const prize = prizes.find((p) => p.rank.toString() === winner.rank.toString());
+
+            if (prize) {
+                const rankEmojis = {
+                    1: "🥇",
+                    2: "🥈",
+                    3: "🥉",
+                };
+                const rankEmoji = rankEmojis[winner.rank] || "🏅";
+                message += `${rankEmoji} ${toCamelCase(winner.userId.name)} won ${getOrdinal(winner.rank)} prize of ${prize.name}\n`;
+            }
+        });
+
+        message += `\n🎯 Keep participating for more rewards! \nFrom Turning Point Team\n`;
+
+        // await sendNotificationMessageToAllUsers(message);
+        await sendNotificationMessageToAllUsers(message);
+        // Step 6: Return success response
+        return res.status(200).json({
+            message: "Notifications sent successfully to all users",
+            success: true,
+            contestName,
+            messageText: message, // Include the message for debugging purposes
+        });
+    } catch (err) {
+        console.error(`Error in sendContestWinnerNotifications: ${err.message}`);
+        next(err); // Pass the error to the error handler middleware
+    }
+};
+
+const sendNotificationMessageToAllUsers = async (message) => {
+    const clientReady = await isClientReady(); // This function will check if the client is ready
+
+    if (!clientReady) {
+        return res.status(400).json({ message: "Client is not ready to send messages", success: false });
+    }
+    const users = await userModel.find({ role: { $ne: "ADMIN" }, name: { $ne: "Contractor" } }, "phone");
+    for (const user of users) {
+        try {
+            const number = `91${user.phone}`;
+            const formattedNumber = `${number}@c.us`;
+            const response = await client.sendMessage(formattedNumber, message);
+
+            if (response && response.success) {
+                console.log("Message sent successfully");
+            } else {
+                console.error("Failed to send message:", response.error || response.message);
+            }
+        } catch (error) {
+            console.error("Error sending message:", error.message);
+        }
+    }
+};
+
+const isClientReady = async () => {
+    try {
+        // Assuming you are using whatsapp-web.js or similar
+        if (client && client.info && client.info.wid) {
+            return true;
+        } else {
+            return false;
+        }
+    } catch (error) {
+        console.error("Error checking client readiness:", error);
+        return false;
     }
 };

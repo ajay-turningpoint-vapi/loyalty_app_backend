@@ -1,12 +1,25 @@
-const { client, generateQRCodeBase64, getClientStatus, initializeWhatsAppClient } = require("../Services/whatsappClient");
+const { client, generateQRCodeBase64, isClientReady } = require("../Services/whatsappClient");
 const path = require("path");
 const fs = require("fs");
 
 const sessionFolderPath = path.join(__dirname, "../wwebjs_auth/session");
 
+const deleteSessionData = (sessionFolderPath) => {
+    try {
+        if (fs.existsSync(sessionFolderPath)) {
+            fs.rmSync(sessionFolderPath, { recursive: true, force: true });
+            console.log("Session data cleared successfully.");
+        } else {
+            console.log("Session folder does not exist, skipping deletion.");
+        }
+    } catch (error) {
+        console.error("Error clearing session data:", error.message);
+    }
+};
+
 // Generate QR Code
 const getQRCode = async (req, res) => {
-    if (getClientStatus()) {
+    if (isClientReady) {
         return res.status(400).json({ error: "Client is already ready" });
     }
 
@@ -16,9 +29,8 @@ const getQRCode = async (req, res) => {
             res.json({ qr: qrBase64 });
         });
 
-        // Ensure client is initialized
-        if (!getClientStatus()) {
-            initializeWhatsAppClient();
+        if (!isClientReady) {
+            client.initialize();
         }
     } catch (error) {
         res.status(500).json({ error: "Failed to generate QR code" });
@@ -32,7 +44,7 @@ const sendMessage = async (req, res) => {
         return res.status(400).json({ error: "Phone number and message are required" });
     }
 
-    if (!getClientStatus()) {
+    if (!isClientReady) {
         return res.status(400).json({ error: "Client is not ready" });
     }
 
@@ -47,23 +59,26 @@ const sendMessage = async (req, res) => {
 
 // Get Client Status
 const getStatus = (req, res) => {
-    const status = getClientStatus() ? "Client is ready" : "Client is not ready";
+    const status = isClientReady ? "Client is ready" : "Client is not ready";
     res.json({ status });
 };
 
 // Logout Client
 const logout = async (req, res) => {
     try {
-        if (!getClientStatus()) {
+        if (!isClientReady) {
             return res.status(400).json({ message: "Client not logged in" });
         }
 
         await client.logout();
         await client.destroy();
+        isClientReady = false; // Mark client as not ready
         deleteSessionData(sessionFolderPath);
 
         res.json({ message: "Logged out successfully" });
     } catch (error) {
+        isClientReady = false; // Mark client as not ready in case of error
+        deleteSessionData(sessionFolderPath);
         console.error("Error during logout:", error.message);
         res.status(500).json({ error: "Failed to log out" });
     }

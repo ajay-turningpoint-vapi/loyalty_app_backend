@@ -56,7 +56,7 @@ mongoose.connect(CONFIG.MONGOURI, { useNewUrlParser: true, useUnifiedTopology: t
         console.log(err);
     } else {
         console.log("connected to db at " + CONFIG.MONGOURI);
-        initializeWhatsAppClient();
+        // initializeWhatsAppClient();
     }
 });
 app.use(logger("dev"));
@@ -87,7 +87,7 @@ app.use("/email", emailRouter);
 app.use("/map", geofenceRouter);
 app.use("/logs", activityLogsRouter);
 app.use("/newContractor", newContractorRouter);
-app.use("/whatsapp", whatsappRoutes);
+// app.use("/whatsapp", whatsappRoutes);
 app.use("/promotions", promotionRoutes);
 app.use("/", fileRouter);
 
@@ -113,10 +113,10 @@ app.get("/backup", async (req, res) => {
 const job = schedule.scheduleJob("*/30 * * * * *", function () {
     let date = format(new Date(), "yyyy-MM-dd");
     let time = format(new Date(), "HH:mm");
-    let time2 = format(new Date(), "HH:mm:ss");
+    // let time2 = format(new Date(), "HH:mm:ss");
     console.log("RUNNING", date, time);
     checkContest(date, time);
-    checkContestWinners(date, time2);
+    // checkContestWinners(date, time2);
 });
 
 const activityLogsDeleteJob = schedule.scheduleJob("0 0 * * 0#2", async () => {

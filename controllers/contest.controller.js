@@ -223,7 +223,7 @@ export const getContestById = async (req, res, next) => {
     }
 };
 
-export const getCurrentContest1 = async (req, res, next) => {
+export const getCurrentContestold = async (req, res, next) => {
     try {
         let pipeline = [
             {
@@ -235,15 +235,14 @@ export const getCurrentContest1 = async (req, res, next) => {
                                     {
                                         $dateToString: {
                                             date: "$endDate",
-                                            format: "%Y-%m-%d",
+                                            format: "%Y-%m-%d", // Ensure it's in YYYY-MM-DD format
                                         },
                                     },
                                     "T",
-                                    "$endTime",
-                                    ":00",
+                                    "$antimationTime", // Use animationTime, which should be in HH:mm:ss format
                                 ],
                             },
-                            timezone: "Asia/Kolkata",
+                            timezone: "Asia/Kolkata", // Assuming animationTime is in Asia/Kolkata time zone
                         },
                     },
                 },
@@ -262,34 +261,29 @@ export const getCurrentContest1 = async (req, res, next) => {
                 },
             },
             {
-                $match: {
-                    $and: [
-                        req.query.admin
-                            ? {}
-                            : {
-                                  combinedEndDateTime: {
-                                      $gt: new Date(),
-                                  },
-                              },
-                        {
-                            combinedEndDateTime: {
-                                $gt: new Date(),
-                            },
-                        },
-                    ],
-                },
+                $match: req.query.admin
+                    ? {} // If admin, no filter on combinedEndDateTime
+                    : {
+                          combinedEndDateTime: {
+                              $gt: new Date(), // If not admin, filter only contests with future end dates
+                          },
+                      },
             },
             {
-                $sort: { combinedEndDateTime: 1 }, // Sort by end date and time in ascending order
+                $sort: { combinedEndDateTime: 1 }, // Sort by end date and animation time in ascending order
             },
             {
-                $limit: 1, // Limit to the first result (nearest end date and time)
+                $limit: 1, // Limit to the first result (nearest end date and animation time)
             },
         ];
 
         let getCurrentContest = await Contest.aggregate(pipeline);
 
         if (getCurrentContest.length > 0) {
+            // Convert combinedEndDateAnimationTime to Asia/Kolkata timezone first
+            let utcDate = moment(getCurrentContest[0].combinedEndDateAnimationTime); // UTC time
+            let istDate = utcDate.clone().utcOffset("+05:30"); // Convert to Asia/Kolkata (UTC +5:30)
+
             // Fetch prize data for the current contest
             let prizeContestArray = await Prize.find({ contestId: `${getCurrentContest[0]._id}` }).exec();
             getCurrentContest[0].prizeArr = prizeContestArray;
@@ -385,6 +379,14 @@ export const getCurrentContest = async (req, res, next) => {
                     status: "join",
                 });
                 getCurrentContest[0].userJoinStatus = userJoinStatus != null;
+
+                // Count how many times the user has joined the contest
+                let userJoinCount = await userContest.countDocuments({
+                    contestId: getCurrentContest[0]._id,
+                    userId: req.user.userId,
+                    status: "join",
+                });
+                getCurrentContest[0].userJoinCount = userJoinCount;
             }
         }
 

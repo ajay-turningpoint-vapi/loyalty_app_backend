@@ -11,3 +11,4 @@ let prize = mongoose.Schema(
 );
 
 export default mongoose.model("prize", prize);
+    

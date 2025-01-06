@@ -23,6 +23,8 @@ export const sendNotificationLuckyDraw = async (userId, req, res, next) => {
         throw new Error("Error sending notification");
     }
 };
+
+
 export const sendNotification = async (fcmToken, name, message) => {
     console.log(fcmToken, message);
     try {

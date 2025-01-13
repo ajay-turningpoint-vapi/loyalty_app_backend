@@ -16,6 +16,7 @@ import QRCode from "qrcode";
 import XLSX from "xlsx";
 import { saveAs } from "file-saver";
 import axios from "axios";
+import { sendNotificationMessage } from "../middlewares/fcm.middleware";
 const nanoid = customAlphabet("1234567890", 10);
 export const addCoupons = async (req, res, next) => {
     try {
@@ -525,7 +526,7 @@ export const addMultipleCoupons = async (req, res, next) => {
 //     }
 // };
 
-export const applyCoupon = async (req, res, next) => {
+export const applyCouponworking = async (req, res, next) => {
     try {
         const { id, latitude, longitude } = req.body;
         const { userId, name, email } = req.user;
@@ -557,6 +558,85 @@ export const applyCoupon = async (req, res, next) => {
             const userPoints = { points: UserObj.points + parseInt(points) };
             await activityLogsModel.create({ userId, type: "Scanned Coupon" });
             await Users.findByIdAndUpdate(userId, userPoints).exec();
+
+            res.status(200).json({ message: "Coupon applied", success: true, points });
+        } else {
+            res.status(200).json({ message: "Better luck next time", success: true, points });
+        }
+    } catch (err) {
+        console.error("Error in applyCoupon:", err);
+        next(err);
+    }
+};
+
+export const applyCoupon = async (req, res, next) => {
+    try {
+        const { id, latitude, longitude } = req.body;
+        const { userId, name, email } = req.user;
+
+        // Find coupon by ID or name
+        const findArr = mongoose.isValidObjectId(id) ? [{ _id: id }, { name: id }] : [{ name: id }];
+        const CouponObj = await Coupon.findOne({ $or: findArr }).exec();
+
+        if (!CouponObj) {
+            return res.status(404).json({ message: "Coupon not found" });
+        }
+
+        if (CouponObj.maximumNoOfUsersAllowed !== 1) {
+            return res.status(400).json({ message: "Coupon has already been applied" });
+        }
+
+        // Fetch the carpenter's user details
+        const UserObj = await Users.findById(userId).exec();
+
+        if (!UserObj) {
+            return res.status(404).json({ message: "User not found" });
+        }
+
+        // Update coupon details
+        await Coupon.findByIdAndUpdate(CouponObj._id, {
+            maximumNoOfUsersAllowed: 0,
+            scannedUserName: name,
+            scannedEmail: email,
+            location: { type: "Point", coordinates: [longitude, latitude] },
+        }).exec();
+
+        const points = CouponObj.value;
+
+        if (points !== 0) {
+            // Update carpenter points and log
+            const pointDescription = `Coupon earned ${points} points by scanning the QR code.`;
+            const mobileDescription = "Coupon";
+            await createPointlogs(userId, points, pointTransactionType.CREDIT, pointDescription, mobileDescription, "success");
+            await activityLogsModel.create({ userId, type: "Scanned Coupon" });
+
+            const updatedCarpenterPoints = { points: UserObj.points + parseInt(points) };
+            await Users.findByIdAndUpdate(userId, updatedCarpenterPoints).exec();
+
+            // Contractor points update and log
+            if (UserObj.contractor && UserObj.contractor.name) {
+                const contractorName = UserObj.contractor.name;
+                const contractorPoints = Math.floor(points * 0.5);
+                const contractorPointDescription = `Earned ${contractorPoints} points (50% of coupon points) from ${name}`;
+
+                // Fetch contractor by name using the Users model
+                const ContractorObj = await Users.findOne({ name: contractorName, role: "CONTRACTOR" }).exec();
+
+                if (ContractorObj) {
+                    const updatedContractorPoints = { points: ContractorObj.points + contractorPoints };
+                    await Users.findByIdAndUpdate(ContractorObj._id, updatedContractorPoints).exec();
+                    await createPointlogs(ContractorObj._id, contractorPoints, pointTransactionType.CREDIT, contractorPointDescription, `Commission`, "success");
+                    try {
+                        const title = "🎉 कमीशन प्राप्त हुआ!";
+                        const body = `🏆 ${name} से आपको ${contractorPoints} पॉइंट्स मिले हैं।`;
+                        await sendNotificationMessage(ContractorObj._id, title, body, "commission");
+                    } catch (notificationError) {
+                        console.error("Error sending notification:", notificationError);
+                    }
+                } else {
+                    console.warn(`Contractor with name ${contractorName} not found.`);
+                }
+            }
 
             res.status(200).json({ message: "Coupon applied", success: true, points });
         } else {

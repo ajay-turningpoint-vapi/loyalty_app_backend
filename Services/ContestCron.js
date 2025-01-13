@@ -89,7 +89,7 @@ export const checkContestWorking = async (date, time) => {
     }
 };
 
-export const checkContest = async (date, time) => {
+export const checkContestNew = async (date, time) => {
     console.log("Checking contests for date and time:", date, time);
 
     try {
@@ -175,6 +175,119 @@ export const checkContest = async (date, time) => {
             try {
                 await sendNotificationMessage(user._id, title, body, "contestResult");
 
+                console.log(`Notification sent to ${user._id}: ${title}: ${body}`);
+            } catch (error) {
+                console.error(`Failed to send notification to ${user.name} (${user.phone}): ${error.message}`);
+            }
+        }
+
+        console.log("Contest check completed successfully:", startDate.getTime(), time);
+    } catch (error) {
+        console.error("Error in checkContest:", error);
+    }
+};
+
+export const checkContest = async (date, time) => {
+    console.log("Checking contests for date and time:", date, time);
+
+    try {
+        // Define start and end of the day
+        const startDate = new Date(date);
+        startDate.setHours(0, 0, 0, 0); // Start of the day
+        const endDate = new Date(date);
+        endDate.setHours(23, 59, 59, 999); // End of the day
+
+        // Find contests that match criteria
+        const openContests = await Contest.find({
+            endTime: time,
+            endDate: { $gte: startDate, $lte: endDate },
+            status: "APPROVED",
+        }).exec();
+
+        if (!openContests.length) {
+            console.log("No contests found for the given time and date.");
+            return;
+        }
+
+        console.log("List of contests:", openContests);
+
+        for (const contest of openContests) {
+            const updatedContest = await Contest.findOneAndUpdate({ _id: contest._id, status: "APPROVED" }, { $set: { status: "PROCESSING" } }, { new: true }).exec();
+
+            if (!updatedContest) {
+                console.log(`Contest ${contest._id} is already being processed by another instance.`);
+                continue;
+            }
+
+            const [contestPrizes, contestUsers] = await Promise.all([Prize.find({ contestId: contest._id }).sort({ rank: 1 }).lean().exec(), userContest.find({ contestId: contest._id, status: "join" }).lean().exec()]);
+
+            const allocatedPrizeIds = new Set();
+            const userPrizeCount = new Map(); // Track prizes won by each user
+
+            console.log("allocatedPrizeIds", allocatedPrizeIds, "userPrizeCount", userPrizeCount);
+
+            if (contestPrizes.length > 0 && contestUsers.length > 0) {
+                for (const prize of contestPrizes) {
+                    if (allocatedPrizeIds.has(prize._id)) continue;
+                    let randomUser = null;
+
+                    while (!randomUser && contestUsers.length > 0) {
+                        const randomIndex = Math.floor(Math.random() * contestUsers.length);
+                        const candidateUser = contestUsers[randomIndex];
+                        const user = await userModel.findById(candidateUser.userId);
+
+                        // Skip blocked users
+                        if (user && user.isBlocked) {
+                            await userContest.findByIdAndUpdate(candidateUser._id, { status: "lose" }).exec();
+                            contestUsers.splice(randomIndex, 1);
+                            continue;
+                        }
+
+                        // Check if user has already won 2 prizes
+                        const prizeCount = userPrizeCount.get(candidateUser.userId) || 0;
+                        if (prizeCount >= 2) {
+                            contestUsers.splice(randomIndex, 1);
+                            continue;
+                        }
+
+                        randomUser = candidateUser;
+                    }
+
+                    if (randomUser) {
+                        await userContest
+                            .findByIdAndUpdate(randomUser._id, {
+                                status: "win",
+                                rank: prize.rank,
+                            })
+                            .exec();
+
+                        // Increment prize count for the user
+                        userPrizeCount.set(randomUser.userId, (userPrizeCount.get(randomUser.userId) || 0) + 1);
+
+                        contestUsers.splice(contestUsers.indexOf(randomUser), 1);
+                        allocatedPrizeIds.add(prize._id);
+                    }
+                }
+            }
+
+            if (contestUsers.length > 0) {
+                await userContest.updateMany({ contestId: contest._id, status: "join" }, { status: "lose" }).exec();
+            }
+
+            await Contest.findByIdAndUpdate(updatedContest._id, { status: "CLOSED" }).exec();
+        }
+
+        const userData = await userModel
+            .find({ role: { $ne: "ADMIN" }, name: { $ne: "Contractor" } })
+            .lean()
+            .exec();
+
+        const title = "🎉 लकी ड्रा के नतीजे अब घोषित होने वाले हैं!";
+        const body = "🏆 अब जानिए कौन जीता! 🎉";
+
+        for (const user of userData) {
+            try {
+                await sendNotificationMessage(user._id, title, body, "contestResult");
                 console.log(`Notification sent to ${user._id}: ${title}: ${body}`);
             } catch (error) {
                 console.error(`Failed to send notification to ${user.name} (${user.phone}): ${error.message}`);

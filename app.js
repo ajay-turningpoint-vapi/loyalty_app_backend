@@ -28,6 +28,7 @@ import reelsLikesRouter from "./routes/ReelLikes.routes";
 import newContractorRouter from "./routes/newContractor.routes";
 import activityLogsRouter from "./routes/activityLogs.routes";
 import promotionRoutes from "./routes/promotion.routes";
+import ticketRoutes from "./routes/ticket.routes";
 import { format } from "date-fns";
 const schedule = require("node-schedule");
 const { exec } = require("child_process");
@@ -89,6 +90,7 @@ app.use("/logs", activityLogsRouter);
 app.use("/newContractor", newContractorRouter);
 // app.use("/whatsapp", whatsappRoutes);
 app.use("/promotions", promotionRoutes);
+app.use("/ticket", ticketRoutes);
 app.use("/", fileRouter);
 
 app.get("/backup", async (req, res) => {

@@ -1301,10 +1301,12 @@ export const loginAdmin = async (req, res, next) => {
         const adminObj = await Users.findOne({ $or: [{ email: new RegExp(`^${req.body.email}$`) }, { phone: req.body.phone }], role: rolesObj.ADMIN })
             .lean()
             .exec();
+
+        console.log("adminObj", adminObj);
         if (adminObj) {
             const passwordCheck = await comparePassword(adminObj.password, req.body.password);
             if (passwordCheck) {
-                let accessToken = await generateAccessJwt({ userId: adminObj._id, role: rolesObj.ADMIN, user: { name: adminObj.name, email: adminObj.email, phone: adminObj.phone, _id: adminObj._id } });
+                let accessToken = await generateAccessJwt({ userId: adminObj._id, role: rolesObj.ADMIN, user: { name: adminObj.name, email: adminObj.email, phone: adminObj.phone, _id: adminObj._id, role: rolesObj.ADMIN } });
                 // let refreshToken = await generateRefreshJwt({ userId: adminObj._id, role: rolesObj.ADMIN, user: { name: adminObj.name, email: adminObj.email, phone: adminObj.phone, _id: adminObj._id } });
                 res.status(200).json({ message: "LogIn Successfull", token: accessToken });
             } else {
@@ -1490,17 +1492,26 @@ export const getUserContestsReportLose = async (req, res, next) => {
 export const getUserContestsReport = async (req, res, next) => {
     try {
         if (!req.query.contestId) {
-            return res.status(400).json({ message: "constestId query parameter is required" });
+            return res.status(400).json({ message: "contestId query parameter is required" });
         }
         const page = parseInt(req.query.page) || 1; // Default to page 1 if not provided
         const limit = parseInt(req.query.limit) || 10; // Default to limit 10 if not provided
         const contestId = req.query.contestId;
+        const queryType = req.query.q;
+
         // Define match condition based on the search query
         const matchCondition = {
-            ...(req.query.q === "winners" ? { status: "win" } : {}),
+            ...(queryType === "winners" ? { status: "win" } : {}),
             contestId: contestId,
         };
-        // Your aggregation pipeline code
+
+        // Define sort condition based on the search query
+        const sortCondition =
+            queryType === "winners"
+                ? { rankAsNumber: 1 } // Sort by rankAsNumber in ascending order for winners
+                : { createdAt: -1 }; // Sort by createdAt in descending order if no q
+
+        // Aggregation pipeline
         const pipeline = [
             {
                 $addFields: {
@@ -1510,7 +1521,7 @@ export const getUserContestsReport = async (req, res, next) => {
             },
             {
                 $lookup: {
-                    from: "users", // Users collection
+                    from: "users",
                     localField: "userIdObject",
                     foreignField: "_id",
                     as: "userObj",
@@ -1518,7 +1529,7 @@ export const getUserContestsReport = async (req, res, next) => {
             },
             {
                 $lookup: {
-                    from: "contests", // Contests collection
+                    from: "contests",
                     localField: "contestIdObject",
                     foreignField: "_id",
                     as: "contestObj",
@@ -1526,22 +1537,22 @@ export const getUserContestsReport = async (req, res, next) => {
             },
             {
                 $addFields: {
-                    userObj: { $arrayElemAt: ["$userObj", 0] }, // Extract the first element of userObj array
-                    contestObj: { $arrayElemAt: ["$contestObj", 0] }, // Extract the first element of contestObj array
+                    userObj: { $arrayElemAt: ["$userObj", 0] },
+                    contestObj: { $arrayElemAt: ["$contestObj", 0] },
                 },
             },
             {
-                $match: matchCondition, // Conditionally match based on search query
+                $match: matchCondition,
             },
             {
                 $addFields: {
-                    rankAsNumber: { $toInt: "$rank" }, // Convert rank from string to integer
+                    rankAsNumber: { $toInt: "$rank" },
                 },
             },
             {
                 $project: {
-                    userIdObject: 0, // Exclude userIdObject field from output
-                    contestIdObject: 0, // Exclude contestIdObject field from output
+                    userIdObject: 0,
+                    contestIdObject: 0,
                     "userObj._id": 0,
                     "userObj.bankDetails": 0,
                     "userObj.businessName": 0,
@@ -1586,7 +1597,7 @@ export const getUserContestsReport = async (req, res, next) => {
                 },
             },
             {
-                $sort: { rankAsNumber: 1 }, // Sort by rankAsNumber in ascending order
+                $sort: sortCondition, // Dynamic sorting based on queryType
             },
         ];
 
@@ -1595,7 +1606,101 @@ export const getUserContestsReport = async (req, res, next) => {
             UserContest.aggregate(pipeline)
                 .skip((page - 1) * limit)
                 .limit(limit),
-            UserContest.countDocuments(matchCondition), // Count documents based on match condition
+            UserContest.countDocuments(matchCondition),
+        ]);
+
+        // Calculate total number of pages
+        const totalPage = Math.ceil(totalCount / limit);
+
+        // Respond with the fetched data including page information
+        res.status(200).json({ data: result, page, totalPage });
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ message: "Internal server error" });
+    }
+};
+
+export const getUserContestsReportUniqueUserIdCount = async (req, res, next) => {
+    try {
+        if (!req.query.contestId) {
+            return res.status(400).json({ message: "contestId query parameter is required" });
+        }
+        const page = parseInt(req.query.page) || 1; // Default to page 1 if not provided
+        const limit = parseInt(req.query.limit) || 10; // Default to limit 10 if not provided
+        const contestId = req.query.contestId;
+
+        // Define match condition based on the search query
+        const matchCondition = {
+            ...(req.query.q === "winners" ? { status: "win" } : {}),
+            contestId: contestId,
+        };
+
+        // Define the aggregation pipeline
+        const pipeline = [
+            {
+                $addFields: {
+                    userIdObject: { $toObjectId: "$userId" },
+                    contestIdObject: { $toObjectId: "$contestId" },
+                },
+            },
+            {
+                $lookup: {
+                    from: "users", // Users collection
+                    localField: "userIdObject",
+                    foreignField: "_id",
+                    as: "userObj",
+                },
+            },
+            {
+                $lookup: {
+                    from: "contests", // Contests collection
+                    localField: "contestIdObject",
+                    foreignField: "_id",
+                    as: "contestObj",
+                },
+            },
+            {
+                $addFields: {
+                    userObj: { $arrayElemAt: ["$userObj", 0] }, // Extract the first element of userObj array
+                    contestObj: { $arrayElemAt: ["$contestObj", 0] },
+                },
+            },
+            {
+                $match: matchCondition, // Conditionally match based on search query
+            },
+            {
+                $group: {
+                    _id: "$userId", // Group by userId
+                    userJoinCount: { $sum: 1 }, // Count occurrences of userId
+                    userObj: { $first: "$userObj" }, // Include user details for the first occurrence
+                    contestObj: { $first: "$contestObj" },
+                },
+            },
+            {
+                $project: {
+                    _id: 0, // Exclude the default MongoDB _id field
+                    userId: "$_id", // Include userId as a field
+                    userJoinCount: 1, // Include userJoin count
+                    "userObj.name": 1, // Include only the user name (or other relevant fields)
+                    "userObj.email": 1,
+                    "contestObj.name": 1,
+                },
+            },
+            {
+                $sort: { userJoinCount: -1 }, // Sort by userJoin count in descending order
+            },
+        ];
+
+        // Execute the aggregation pipeline with pagination
+        const [result, totalCount] = await Promise.all([
+            UserContest.aggregate(pipeline)
+                .skip((page - 1) * limit)
+                .limit(limit),
+            UserContest.aggregate([
+                { $match: matchCondition },
+                { $group: { _id: "$userId" } }, // Count distinct userId
+                { $count: "totalCount" }, // Count total distinct userIds
+            ]).then((countResult) => (countResult[0] ? countResult[0].totalCount : 0)),
         ]);
 
         // Calculate total number of pages
@@ -1722,14 +1827,14 @@ export const getUserContests = async (req, res, next) => {
 
 export const testupdate = async (req, res) => {
     try {
+        // Update condition
+        const query = { contestId: "6784c1ee41a3e558c08abad6" };
+
         // Update operation
         const update = { $set: { rank: "0", status: "join" } };
 
-        // Update options
-        const options = { multi: true };
-
-        // Perform the update for all documents
-        const result = await UserContest.updateMany({}, update, options);
+        // Perform the update for all documents matching the query
+        const result = await UserContest.updateMany(query, update);
 
         res.json({ message: "Update successful", result });
     } catch (error) {
@@ -1737,6 +1842,7 @@ export const testupdate = async (req, res) => {
         res.status(500).json({ message: "Internal server error" });
     }
 };
+
 
 export const getPointHistoryByUserId = async (req, res) => {
     try {
@@ -2076,7 +2182,7 @@ export const getUserStatsReport = async (req, res, next) => {
 //     }
 // };
 
-export const getAllCaprenterByContractorName = async (req, res) => {
+export const getAllCaprenterByContractorNameOld = async (req, res) => {
     try {
         const { businessName, name } = req.user.userObj;
         const contractors = await Users.find({
@@ -2085,9 +2191,6 @@ export const getAllCaprenterByContractorName = async (req, res) => {
             businessName,
         });
 
-        // if (contractors.length === 0) {
-        //     return res.status(404).json({ message: "No contractors found" });
-        // }
         const contractorNames = contractors.map((contractor) => contractor.name);
         const contractorBusinessNames = contractors.map((contractor) => contractor.businessName);
 
@@ -2096,9 +2199,6 @@ export const getAllCaprenterByContractorName = async (req, res) => {
             "contractor.name": { $in: contractorNames },
             "contractor.businessName": { $in: contractorBusinessNames },
         });
-        // if (carpenters.length === 0) {
-        //     return res.status(404).json({ message: "No carpenters found" });
-        // }
 
         const allCarpentersTotal = carpenters.reduce((total, carpenter) => total + carpenter.points, 0);
         const result = {
@@ -2117,12 +2217,67 @@ export const getAllCaprenterByContractorName = async (req, res) => {
     }
 };
 
+export const getAllCaprenterByContractorName = async (req, res) => {
+    try {
+        const { businessName, name } = req.user.userObj;
+
+        // Fetch contractors based on name and businessName
+        const contractors = await Users.find({
+            role: "CONTRACTOR",
+            name,
+            businessName,
+        });
+
+        // Extract contractor names and businessNames
+        const contractorNames = contractors.map((contractor) => contractor.name);
+        const contractorBusinessNames = contractors.map((contractor) => contractor.businessName);
+
+        // Fetch carpenters who belong to the contractors
+        const carpenters = await Users.find({
+            role: "CARPENTER",
+            "contractor.name": { $in: contractorNames },
+            "contractor.businessName": { $in: contractorBusinessNames },
+        });
+
+        // Calculate total points of all carpenters
+        const allCarpentersTotal = carpenters.reduce((total, carpenter) => total + carpenter.points, 0);
+
+        // Fetch commissions earned by carpenters (assuming commissions are stored in point logs)
+        const carpentersIds = carpenters.map((carpenter) => carpenter._id);
+        const commissionLogs = await pointHistoryModel
+            .find({
+                userId: { $in: carpentersIds },
+                transactionType: "CREDIT", // Assuming "CREDIT" refers to commission-related transactions
+                mobileDescription: "Commission", // Assuming "Commission Earned" is the description for commission transactions
+            })
+            .exec();
+
+        // Calculate total commission earned by carpenters
+        const totalCommission = commissionLogs.reduce((total, log) => total + log.amount, 0); // Adjust `log.amount` as per your actual data structure
+
+        // Prepare response data
+        const result = {
+            data: {
+                name,
+                businessName,
+                allCarpenters: carpenters.map(({ name, image, points }) => ({ name, image, points })),
+                allCarpentersTotal,
+                totalCommission, // Add total commission
+            },
+        };
+
+        res.json(result);
+    } catch (error) {
+        console.error("Error fetching carpenters and commissions:", error);
+        res.status(500).json({ message: "Internal server error" });
+    }
+};
+
 export const getCaprentersByContractorNameAdmin = async (req, res) => {
     try {
         const businessName = req.params.name;
         const carpenters = await Users.find({ "contractor.businessName": { $in: businessName }, role: "CARPENTER" }).select("name phone email isActive kycStatus role points");
 
-        // Check if carpenters were found
         if (carpenters.length === 0) {
             return res.status(404).json({ message: "No carpenters found for the specified business name" });
         }

@@ -1729,6 +1729,7 @@ export const getUserContestsJoinCount = async (req, res, next) => {
         next(error);
     }
 };
+
 export const getUserContests = async (req, res, next) => {
     try {
         // Pagination parameters
@@ -1842,7 +1843,6 @@ export const testupdate = async (req, res) => {
         res.status(500).json({ message: "Internal server error" });
     }
 };
-
 
 export const getPointHistoryByUserId = async (req, res) => {
     try {

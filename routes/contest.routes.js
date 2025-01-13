@@ -44,5 +44,5 @@ router.get("/currentContest", authorizeJwt, currentContest);
 router.get("/rewardNotificationWinners/:contestId", sendContestWinnerNotifications);
 router.get("/currentContestRewards", getCurrentContestRewards);
 router.get("/previousContestRewards", getPreviousContestRewards);
-router.get('/openContest', getOpenContests);
+router.get("/openContest", getOpenContests);
 export default router;

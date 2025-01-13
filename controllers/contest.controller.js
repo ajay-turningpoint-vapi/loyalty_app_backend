@@ -431,7 +431,7 @@ export const getOpenContests = async (req, res) => {
     }
 };
 
-export const getContest = async (req, res, next) => {
+export const getContestold = async (req, res, next) => {
     try {
         let pipeline = [
             {
@@ -467,6 +467,117 @@ export const getContest = async (req, res, next) => {
                                     "T",
                                     "$endTime",
                                     ":00",
+                                ],
+                            },
+                            timezone: "Asia/Kolkata",
+                        },
+                    },
+                },
+            },
+            {
+                $addFields: {
+                    status: {
+                        $cond: {
+                            if: {
+                                $and: [
+                                    {
+                                        $gt: ["$combinedEndDateTime", new Date()],
+                                    },
+                                    {
+                                        $lt: ["$combinedStartDateTime", new Date()],
+                                    },
+                                ],
+                            },
+                            then: "ACTIVE",
+                            else: "INACTIVE",
+                        },
+                    },
+                },
+            },
+            {
+                $match: {
+                    $and: [
+                        req.query.admin
+                            ? {}
+                            : {
+                                  combinedEndDateTime: {
+                                      $gt: new Date(),
+                                  },
+                              },
+                        {
+                            combinedStartDateTime: {
+                                $lt: new Date(),
+                            },
+                        },
+                    ],
+                },
+            },
+        ];
+
+        let getContest = await Contest.aggregate(pipeline);
+
+        // Iterate over each contest to fetch additional data
+        for (let Contestobj of getContest) {
+            if (Contestobj?._id) {
+                // Fetch prize data for each contest
+                let prizeContestArry = await Prize.find({ contestId: `${Contestobj._id}` }).exec();
+                Contestobj.prizeArr = prizeContestArry;
+
+                // Check if the user has joined the contest
+                if (req.user.userId) {
+                    let userJoinStatus = await userContest.exists({
+                        contestId: Contestobj._id,
+                        userId: req.user.userId,
+                        status: "join",
+                    });
+                    Contestobj.userJoinStatus = userJoinStatus != null;
+                }
+            }
+        }
+
+        // Respond with the modified JSON object containing information about the contests and associated prize arrays
+        res.status(200).json({ message: "getContest", data: getContest, success: true });
+    } catch (err) {
+        next(err);
+    }
+};
+
+
+export const getContest = async (req, res, next) => { 
+    try {
+        let pipeline = [
+            {
+                $addFields: {
+                    combinedStartDateTime: {
+                        $dateFromString: {
+                            dateString: {
+                                $concat: [
+                                    {
+                                        $dateToString: {
+                                            date: "$startDate",
+                                            format: "%Y-%m-%d",
+                                        },
+                                    },
+                                    "T",
+                                    "$startTime",
+                                    ":00",
+                                ],
+                            },
+                            timezone: "Asia/Kolkata",
+                        },
+                    },
+                    combinedEndDateTime: {
+                        $dateFromString: {
+                            dateString: {
+                                $concat: [
+                                    {
+                                        $dateToString: {
+                                            date: "$endDate",
+                                            format: "%Y-%m-%d",
+                                        },
+                                    },
+                                    "T",
+                                    "$antimationTime", // Using antimationTime instead of endTime
                                 ],
                             },
                             timezone: "Asia/Kolkata",

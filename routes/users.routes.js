@@ -45,6 +45,9 @@ import {
     verifyOtp,
     phoneOtpgenerate,
     blockUser,
+    updateUserProfileNote,
+    updateUserProfileAdmin,
+    getContractorUsingPhone,
 } from "../controllers/users.controller";
 import { authorizeJwt } from "../middlewares/auth.middleware";
 import { sendSingleNotificationMiddleware } from "../middlewares/fcm.middleware";
@@ -68,8 +71,11 @@ router.put("/updateStatus", testupdate);
 router.patch("/updateUserKycStatus/:id", updateUserKycStatus);
 router.patch("/updateUserOnlineStatus", authorizeJwt, updateUserOnlineStatus);
 router.patch("/update-profile", authorizeJwt, updateUserProfile);
+router.patch("/update-profile-admin", authorizeJwt, updateUserProfileAdmin);
 router.patch("/update-profile-image", authorizeJwt, updateUserProfileImage);
 router.get("/getAllContractors", getAllContractors);
+router.post("/getContractorUsingPhone", getContractorUsingPhone);
+
 router.get("/getAllCarpentersByContractorName", authorizeJwt, getAllCaprenterByContractorName);
 router.get("/getCaprentersByContractorNameAdmin/:name", authorizeJwt, getCaprentersByContractorNameAdmin);
 router.get("/getUserStatsReport/:id", getUserStatsReport);

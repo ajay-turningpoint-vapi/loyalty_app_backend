@@ -34,6 +34,7 @@ export const UserList = (payload) => {
                 points: 1,
                 idFrontImage: 1,
                 idBackImage: 1,
+                selfie:1,
                 bankDetails: 1,
                 visitingCard: 1,
                 shopImage: 1,
@@ -42,6 +43,8 @@ export const UserList = (payload) => {
                 createdAt: 1,
                 isOnline: 1,
                 isBlocked: 1,
+                note: 1,
+                contractor:1
             },
         },
         { $sort: sortCondition },

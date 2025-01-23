@@ -42,10 +42,10 @@ function addSeconds(timeString, secondsToAdd) {
     const [hours, minutes, seconds] = timeString.split(":").map(Number);
 
     // Calculate total seconds
-    let totalSeconds = hours * 3600 + minutes * 60 + seconds;
+    let totalSeconds = hours * 3600 + minutes * 60 + seconds + 30;
 
     // Add seconds to total seconds
-    totalSeconds += secondsToAdd;
+    totalSeconds += secondsToAdd ;
 
     // Calculate hours, minutes, and remaining seconds
     const newHours = Math.floor(totalSeconds / 3600);
@@ -1576,7 +1576,7 @@ export const getCurrentContestRewards = async (req, res, next) => {
         // Attach user details to the current contest prizes
         for (const prize of currentContestPrizes) {
             const winner = await userContest.findOne({ contestId: currentContest._id, rank: prize.rank, status: "win" }).populate("userId").lean().exec();
-            prize.winnerDetails = winner?.userId ? await userModel.findById(winner.userId).select("name image -_id").lean().exec() : null;
+            prize.winnerDetails = winner?.userId ? await userModel.findById(winner.userId).select("name image phone -_id").lean().exec() : null;
         }
 
         // Include only the contest name and contest prizes with winner details in the response

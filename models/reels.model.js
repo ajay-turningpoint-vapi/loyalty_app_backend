@@ -11,7 +11,7 @@ let reels = mongoose.Schema(
         link: { name: String },
         isLiked: { type: Boolean, default: false },
         type: { type: String, require: true },
-        description: { type: String, require: true },
+        description: { type: String },
     },
     { timestamps: true }
 );

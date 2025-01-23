@@ -25,6 +25,8 @@ import { CONFIG } from "../helpers/Config";
 import axios from "axios";
 import otpModel from "../models/otp.model";
 import { autoJoinContest } from "./contest.controller";
+import CouponsModel from "../models/Coupons.model";
+import "dotenv/config";
 const geolib = require("geolib");
 const AWS = require("aws-sdk");
 
@@ -60,6 +62,12 @@ export const phoneOtpgenerate = async (req, res) => {
 
 export const verifyOtp = async (req, res) => {
     const { phone, otp } = req.body;
+
+    // Check if the incoming phone and OTP match the dummy values
+    if (phone === process.env.PHONE && otp === process.env.OTP) {
+        return res.status(200).json({ message: "Dummy OTP verified successfully" });
+    }
+
     console.log(req.body);
 
     // Find OTP entry
@@ -397,9 +405,9 @@ export const registerUser = async (req, res, next) => {
             referrer.referralRewards.push(reward._id);
             await referrer.save();
             try {
-                const title = "🎉 You've Won a Scratch Card! Claim Your Reward Now!";
-                const body = `🏆 Congratulations! You've unlocked a special reward with your referral! 🎁 Scratch and reveal your prize now for a chance to win exciting rewards! 💰 Keep the winning streak going and share the joy with more referrals! The more you refer, the more rewards you earn! Don't wait, claim your prize and spread the excitement! 🚀`;
-                await sendNotificationMessage(referrer._id, title, body, "Referral");
+                const title = "🎉आपको रिफरल स्क्रैच कार्ड मिला है!";
+                const body = "🏆अपना इनाम देखने के लिए स्क्रैच करें!";
+                await sendNotificationMessage(referrer._id, title, body, "referral");
             } catch (error) {
                 console.error("Error sending notification for user:", referrer._id);
             }
@@ -408,6 +416,7 @@ export const registerUser = async (req, res, next) => {
             userId: newUser?._id,
             phone: newUser?.phone,
             email: newUser?.email,
+            name: newUser?.name,
             uid: newUser?.uid,
             fcmToken: newUser?.fcmToken,
         });
@@ -416,15 +425,16 @@ export const registerUser = async (req, res, next) => {
             phone: newUser?.phone,
             email: newUser?.email,
             uid: newUser?.uid,
+            name: newUser?.name,
             fcmToken: newUser?.fcmToken,
         });
 
         await Token.create({ uid: newUser.uid, userId: newUser._id, token: accessToken, refreshToken, fcmToken: newUser?.fcmToken });
 
-        const registrationTitle = "🎉 Turning Point में आपका स्वागत है!";
-        const registrationBody = `👏 बधाई हो, ${newUser.name}! 🚀 अब रोमांचक रील्स, एक्सक्लूसिव ऑफर्स और लकी ड्रा का हिस्सा बनें! तैयार हो जाइए, मज़ा आने वाला है! 🌟🎉`;
+        const registrationTitle = `👏 बधाई हो, ${newUser?.name}! 🎉`;
+        const registrationBody = `🎉 Turning Point में आपका स्वागत है!`;
         await sendNotificationMessage(newUser._id, registrationTitle, registrationBody, "New User");
-        sendWhatsAppMessage("newuser", "918975944936", newUser.name, newUser.phone, newUser.email);
+        // sendWhatsAppMessage("newuser", "918975944936", newUser.name, newUser.phone, newUser.email);
         res.status(200).json({ message: "User Created", data: newUser, token: accessToken, status: true });
     } catch (error) {
         console.error("register user", error);
@@ -793,8 +803,6 @@ export const getAllGeofence = async (req, res) => {
 };
 
 export const updateUserProfile = async (req, res, next) => {
-    console.log("kyc", req.body);
-
     try {
         let userObj = await Users.findById(req.user.userId).exec();
         if (!userObj) {
@@ -831,6 +839,27 @@ export const updateUserProfile = async (req, res, next) => {
         if (err instanceof MongoServerError && err.code === 11000) {
             return res.status(400).json({ message: "Email Already Exists", success: false });
         }
+        next(err);
+    }
+};
+
+export const updateUserProfileAdmin = async (req, res, next) => {
+    try {
+        // Ensure userId is provided in the request body
+        const { userId } = req.body;
+        if (!userId) {
+            return res.status(400).json({ message: "User ID is required", success: false });
+        }
+
+        // Update user with the provided data from the request body
+        const userObj = await Users.findByIdAndUpdate(userId, req.body, { new: true }).exec();
+
+        if (!userObj) {
+            return res.status(404).json({ message: "User not found", success: false });
+        }
+
+        res.status(200).json({ message: "Profile updated successfully", data: userObj, success: true });
+    } catch (err) {
         next(err);
     }
 };
@@ -924,8 +953,13 @@ const updateUserOnlineStatusWithRetry = async (userId, isOnline, retries = 3) =>
 
 export const updateUserOnlineStatus = async (req, res) => {
     try {
+
+     if (!req.user || !req.user.userId) {
+            return res.status(401).json({ error: "User is not online" });
+        }
         const { userId } = req?.user;
         const { isOnline } = req.body;
+
 
         if (typeof isOnline !== "boolean") {
             return res.status(400).json({ error: "Invalid input, 'isOnline' must be a boolean" });
@@ -988,49 +1022,7 @@ export const getUsersAnalytics = async (req, res, next) => {
     }
 };
 
-export const getUsers = async (req, res, next) => {
-    try {
-        const UsersPipeline = UserList(req.query);
-        let UsersArr = await Users.aggregate(UsersPipeline);
-        // let UserObj = await Users.find();
-        UsersArr = UsersArr.filter((el) => el.role != rolesObj.ADMIN);
-        res.status(200).json({ message: "Users", data: UsersArr, success: true });
-    } catch (error) {
-        console.error(error);
-        next(error);
-    }
-};
-
-export const getContractors = async (req, res, next) => {
-    try {
-        const currentContractorEmail = req.body.email;
-
-        const UsersPipeline = UserList(req.query);
-
-        UsersPipeline.push({
-            $match: {
-                role: rolesObj.CONTRACTOR,
-                email: { $ne: currentContractorEmail },
-            },
-        });
-
-        UsersPipeline.push({
-            $sort: {
-                name: 1,
-            },
-        });
-        let UsersArr = await Users.aggregate(UsersPipeline);
-
-        const namesAndShopNames = UsersArr.map((user) => ({ name: user.name, businessName: user.businessName }));
-
-        res.status(200).json({ message: "Contractors", data: namesAndShopNames, success: true });
-    } catch (error) {
-        console.error(error);
-        next(error);
-    }
-};
-
-export const getUserActivityAnalysis = async (req, res, next) => {
+export const getUserActivityAnalysisOld = async (req, res, next) => {
     try {
         const { startDate, endDate } = req.query;
 
@@ -1103,6 +1095,113 @@ export const getUserActivityAnalysis = async (req, res, next) => {
     } catch (error) {
         console.error(error);
         res.status(500).json({ success: false, message: "Failed to fetch users or get counts for the users" });
+    }
+};
+
+export const getUsers = async (req, res, next) => {
+    try {
+        const UsersPipeline = UserList(req.query);
+        let UsersArr = await Users.aggregate(UsersPipeline);
+        // let UserObj = await Users.find();
+        UsersArr = UsersArr.filter((el) => el.role != rolesObj.ADMIN);
+        res.status(200).json({ message: "Users", data: UsersArr, success: true });
+    } catch (error) {
+        console.error(error);
+        next(error);
+    }
+};
+
+export const getContractors = async (req, res, next) => {
+    try {
+        const currentContractorEmail = req.body.email;
+
+        const UsersPipeline = UserList(req.query);
+
+        UsersPipeline.push({
+            $match: {
+                role: rolesObj.CONTRACTOR,
+                email: { $ne: currentContractorEmail },
+            },
+        });
+
+        UsersPipeline.push({
+            $sort: {
+                name: 1,
+            },
+        });
+        let UsersArr = await Users.aggregate(UsersPipeline);
+
+        const namesAndShopNames = UsersArr.map((user) => ({ name: user.name, businessName: user.businessName }));
+
+        res.status(200).json({ message: "Contractors", data: namesAndShopNames, success: true });
+    } catch (error) {
+        console.error(error);
+        next(error);
+    }
+};
+export const getUserActivityAnalysis = async (req, res) => {
+    try {
+        const { startDate, endDate } = req.query;
+
+        const startDateParsed = startDate ? new Date(startDate) : new Date("2020-01-01");
+        const endDateParsed = endDate ? new Date(endDate) : new Date();
+
+        if (isNaN(startDateParsed) || isNaN(endDateParsed) || startDateParsed > endDateParsed) {
+            return res.status(400).json({ success: false, message: "Invalid or inconsistent date range" });
+        }
+
+        const users = await Users.aggregate([
+            {
+                $match: {
+                    name: { $ne: "Contractor" },
+                    role: { $ne: "ADMIN" },
+                    createdAt: { $gte: startDateParsed, $lte: endDateParsed },
+                },
+            },
+            {
+                $lookup: {
+                    from: "reellikes", // Ensure this is the correct collection name in MongoDB
+                    localField: "_id", // User's _id field
+                    foreignField: "userId", // Refers to the userId field in the reelLikes collection
+                    as: "reelsLikes", // Alias for the results
+                },
+            },
+            {
+                $lookup: {
+                    from: "usercontests",
+                    localField: "_id",
+                    foreignField: "userId",
+                    as: "userContests",
+                },
+            },
+            {
+                $project: {
+                    name: 1,
+                    phone: 1,
+                    role: 1,
+                    createdAt: 1,
+                    reelsLikeCount: { $size: "$reelsLikes" },
+                    contestJoinCount: { $size: "$userContests" },
+                    contestWinCount: {
+                        $size: {
+                            $filter: {
+                                input: "$userContests",
+                                as: "contest",
+                                cond: { $eq: ["$$contest.status", "win"] },
+                            },
+                        },
+                    },
+                },
+            },
+        ]);
+
+        const totalReelsLikeCount = users.reduce((acc, user) => acc + user.reelsLikeCount, 0);
+        const totalContestJoinCount = users.reduce((acc, user) => acc + user.contestJoinCount, 0);
+
+        res.status(200).json({ success: true, data: users, totalReelsLikeCount, totalContestJoinCount });
+    } catch (error) {
+        console.error("Error fetching user activity analysis:", error);
+        res.status(500).json({ success: false, message: "Internal Server Error" });
     }
 };
 
@@ -1555,18 +1654,14 @@ export const getUserContestsReport = async (req, res, next) => {
                     contestIdObject: 0,
                     "userObj._id": 0,
                     "userObj.bankDetails": 0,
-                    "userObj.businessName": 0,
-                    "userObj.contractor": 0,
                     "userObj.createdAt": 0,
                     "userObj.email": 0,
                     "userObj.fcmToken": 0,
                     "userObj.idBackImage": 0,
                     "userObj.idFrontImage": 0,
-                    "userObj.image": 0,
                     "userObj.isActive": 0,
                     "userObj.isOnline": 0,
                     "userObj.kycStatus": 0,
-                    "userObj.phone": 0,
                     "userObj.pincode": 0,
                     "userObj.points": 0,
                     "userObj.refCode": 0,
@@ -1829,7 +1924,7 @@ export const getUserContests = async (req, res, next) => {
 export const testupdate = async (req, res) => {
     try {
         // Update condition
-        const query = { contestId: "6784c1ee41a3e558c08abad6" };
+        const query = { contestId: "678f8be5a95e34e8b718f627" };
 
         // Update operation
         const update = { $set: { rank: "0", status: "join" } };
@@ -2040,147 +2135,131 @@ export const getUserStatsReport = async (req, res, next) => {
     }
 };
 
-// export const getUserStatsReport = async (req, res, next) => {
-// try {
-//     let totalPointsRedeemedPipeline = [
-//         {
-//             $match: {
-//                 userId: new mongoose.Types.ObjectId(req.params.id),
-//             },
-//         },
-//         {
-//             $group: {
-//                 _id: null,
-//                 total: {
-//                     $sum: { $toDouble: "$amount" },
-//                 },
-//             },
-//         },
-//     ];
-//         let totalPointsRedeemedForLikingPipeline = [
-//             {
-//                 $match: {
-//                     userId: new mongoose.Types.ObjectId(req.params.id),
-//                     type: "CREDIT",
-//                     description: {
-//                         $regex: "liking a reel",
-//                         $options: "i",
-//                     },
-//                 },
-//             },
-//             {
-//                 $group: {
-//                     _id: null,
-//                     total: {
-//                         $sum: { $toDouble: "$amount" },
-//                     },
-//                 },
-//             },
-//         ];
-//         let totalPointsRedeemedForProductsPipeline = [
-//             {
-//                 $match: {
-//                     userId: new mongoose.Types.ObjectId(req.params.id),
-//                     type: "CREDIT",
-//                     description: {
-//                         $not: {
-//                             $regex: "liking a reel",
-//                             $options: "i",
-//                         },
-//                     },
-//                 },
-//             },
-//             {
-//                 $match: {},
-//             },
-//             {
-//                 $group: {
-//                     _id: null,
-//                     total: {
-//                         $sum: { $toDouble: "$amount" },
-//                     },
-//                 },
-//             },
-//         ];
-//         let totalPointsRedeemedInCashPipeline = [
-//             {
-//                 $match: {
-//                     userId: new mongoose.Types.ObjectId(req.params.id),
-//                     type: "DEBIT",
-//                     $and: [{ status: { $ne: "reject" } }, { status: { $ne: "pending" } }],
-//                     description: {
-//                         $not: {
-//                             $regex: "Contest Joined",
-//                             $options: "i",
-//                         },
-//                     },
-//                 },
-//             },
-//             {
-//                 $group: {
-//                     _id: null,
-//                     total: {
-//                         $sum: { $toDouble: "$amount" },
-//                     },
-//                 },
-//             },
-//         ];
-//         let totalPointsRedeemedInContestPipeline = [
-//             {
-//                 $match: {
-//                     userId: new mongoose.Types.ObjectId(req.params.id),
-//                     type: "DEBIT",
-//                     $and: [{ status: { $ne: "reject" } }, { status: { $ne: "pending" } }],
-//                     description: {
-//                         $regex: "Contest Joined",
-//                         $options: "i",
-//                     },
-//                 },
-//             },
-//             {
-//                 $group: {
-//                     _id: null,
-//                     total: {
-//                         $sum: { $toDouble: "$amount" },
-//                     },
-//                 },
-//             },
-//         ];
+export const getUserStatsReportTEST = async (req, res, next) => {
+    try {
+        const userId = req.params.id;
 
-//         console.log(
-//             JSON.stringify(totalPointsRedeemedPipeline, null, 2),
-//             JSON.stringify(totalPointsRedeemedForLikingPipeline, null, 2),
-//             JSON.stringify(totalPointsRedeemedForProductsPipeline, null, 2),
-//             JSON.stringify(totalPointsRedeemedInCashPipeline, null, 2),
-//             JSON.stringify(totalPointsRedeemedInContestPipeline, null, 2)
-//         );
-//         let totalPointsRedeemed = await pointHistoryModel.aggregate(totalPointsRedeemedPipeline);
-//         let totalPointsRedeemedForLiking = await pointHistoryModel.aggregate(totalPointsRedeemedForLikingPipeline);
-//         let totalPointsRedeemedForProducts = await pointHistoryModel.aggregate(totalPointsRedeemedForProductsPipeline);
-//         let totalPointsRedeemedInCash = await pointHistoryModel.aggregate(totalPointsRedeemedInCashPipeline);
-//         let totalPointsRedeemedInContest = await pointHistoryModel.aggregate(totalPointsRedeemedInContestPipeline);
-//         let userObj = await Users.findById(req.params.id).exec();
-//         if (!userObj) {
-//             throw new Error("User not found !!!");
-//         }
+        // Define pipelines for aggregation
+        const allTransactions = [
+            {
+                $match: { userId: userId },
+            },
+        ];
 
-//         let obj = {
-//             userName: userObj?.name,
-//             points: userObj?.points,
-//             totalPointsRedeemed: totalPointsRedeemed[0]?.total,
-//             totalPointsRedeemedForLiking: totalPointsRedeemedForLiking[0]?.total,
-//             totalPointsRedeemedForProducts: totalPointsRedeemedForProducts[0]?.total,
-//             totalPointsRedeemedInCash: totalPointsRedeemedInCash[0]?.total,
-//             totalPointsRedeemedInContest: totalPointsRedeemedInContest[0]?.total,
-//         };
-//         console.log(obj);
+        const likingReelpipeline = [
+            {
+                $match: {
+                    userId: userId,
+                    type: "CREDIT",
+                    description: { $regex: "liking a reel", $options: "i" },
+                },
+            },
+            {
+                $group: { _id: null, totalAmount: { $sum: "$amount" } },
+            },
+        ];
 
-//         res.status(200).json({ message: "User Contest", data: obj, success: true });
-//     } catch (error) {
-//         console.error(error);
-//         next(error);
-//     }
-// };
+        const totalPointsRedeemedInContestPipeline = [
+            {
+                $match: {
+                    userId: userId,
+                    type: "DEBIT",
+                    $and: [{ status: { $ne: "reject" } }, { status: { $ne: "pending" } }],
+                    description: { $regex: "Contest Joined", $options: "i" },
+                },
+            },
+            {
+                $group: { _id: null, totalAmount: { $sum: "$amount" } },
+            },
+        ];
+
+        const totalDebitPipeline = [
+            {
+                $match: {
+                    userId: userId,
+                    type: "DEBIT",
+                    $and: [{ status: { $ne: "reject" } }, { status: { $ne: "pending" } }],
+                },
+            },
+            {
+                $group: { _id: null, totalAmount: { $sum: "$amount" } },
+            },
+        ];
+
+        const totalPointsCouponPipeline = [
+            {
+                $match: {
+                    userId: userId,
+                    type: "CREDIT",
+                    description: { $regex: "Coupon Earned", $options: "i" },
+                },
+            },
+            {
+                $group: { _id: null, totalAmount: { $sum: "$amount" } },
+            },
+        ];
+
+        const totalPointsReferralPipeline = [
+            {
+                $match: {
+                    userId: userId,
+                    type: "CREDIT",
+                    description: { $regex: "Referral Reward", $options: "i" },
+                },
+            },
+            {
+                $group: { _id: null, totalAmount: { $sum: "$amount" } },
+            },
+        ];
+
+        // Execute aggregation pipelines
+        const userAllTransactions = await pointHistoryModel.aggregate(allTransactions).exec();
+        const likingReel = await pointHistoryModel.aggregate(likingReelpipeline).exec();
+        const totalContest = await pointHistoryModel.aggregate(totalPointsRedeemedInContestPipeline).exec();
+        const totalCoupon = await pointHistoryModel.aggregate(totalPointsCouponPipeline).exec();
+        const totalReferral = await pointHistoryModel.aggregate(totalPointsReferralPipeline).exec();
+        const totalDebit = await pointHistoryModel.aggregate(totalDebitPipeline).exec();
+
+        // Fetch user details and exclude unwanted fields
+        const user = await Users.findById(userId, {
+            fcmToken: 0,
+            isOnline: 0,
+            refCode: 0,
+            referralRewards: 0,
+            referrals: 0,
+            uid: 0,
+            updatedAt: 0,
+            actualAddress: 0,
+        }).exec();
+
+        if (!user) {
+            throw new Error("User not found");
+        }
+
+        // Calculate points redeemed
+        const totalPointsRedeemed = user.points - (totalDebit.length > 0 ? totalDebit[0].totalAmount : 0);
+
+        // Construct the response object
+        const response = {
+            user, // Include the filtered user object
+            totalPointsRedeemed: totalDebit.length > 0 ? totalDebit[0].totalAmount : 0,
+            totalPointsRedeemedForProducts: totalCoupon.length > 0 ? totalCoupon[0].totalAmount : 0,
+            totalPointsEarnedFromReferrals: totalReferral.length > 0 ? totalReferral[0].totalAmount : 0,
+            totalPointsRedeemedForLiking: likingReel.length > 0 ? likingReel[0].totalAmount : 0,
+            totalPointsRedeemedInContest: totalContest.length > 0 ? totalContest[0].totalAmount : 0,
+            userAllTransactions: userAllTransactions,
+        };
+
+        res.status(200).json({
+            message: "User stats report fetched successfully",
+            data: response,
+            success: true,
+        });
+    } catch (error) {
+        console.error(error);
+        next(error);
+    }
+};
 
 export const getAllCaprenterByContractorNameOld = async (req, res) => {
     try {
@@ -2217,7 +2296,7 @@ export const getAllCaprenterByContractorNameOld = async (req, res) => {
     }
 };
 
-export const getAllCaprenterByContractorName = async (req, res) => {
+export const getAllCaprenterByContractorName1 = async (req, res) => {
     try {
         const { businessName, name } = req.user.userObj;
 
@@ -2243,7 +2322,9 @@ export const getAllCaprenterByContractorName = async (req, res) => {
         const allCarpentersTotal = carpenters.reduce((total, carpenter) => total + carpenter.points, 0);
 
         // Fetch commissions earned by carpenters (assuming commissions are stored in point logs)
-        const carpentersIds = carpenters.map((carpenter) => carpenter._id);
+        const carpentersIds = carpenters.map((carpenter) => carpenter._id.toString());
+
+        console.log("carpentersID", carpentersIds);
         const commissionLogs = await pointHistoryModel
             .find({
                 userId: { $in: carpentersIds },
@@ -2252,8 +2333,13 @@ export const getAllCaprenterByContractorName = async (req, res) => {
             })
             .exec();
 
+        console.log("Commission Logs:", commissionLogs); // Log commission logs to check
+
         // Calculate total commission earned by carpenters
-        const totalCommission = commissionLogs.reduce((total, log) => total + log.amount, 0); // Adjust `log.amount` as per your actual data structure
+        const totalCommission = commissionLogs.reduce((total, log) => {
+            console.log("Log Amount:", log.amount); // Log amount for each commission
+            return total + log.amount;
+        }, 0);
 
         // Prepare response data
         const result = {
@@ -2263,6 +2349,89 @@ export const getAllCaprenterByContractorName = async (req, res) => {
                 allCarpenters: carpenters.map(({ name, image, points }) => ({ name, image, points })),
                 allCarpentersTotal,
                 totalCommission, // Add total commission
+            },
+        };
+
+        res.json(result);
+    } catch (error) {
+        console.error("Error fetching carpenters and commissions:", error);
+        res.status(500).json({ message: "Internal server error" });
+    }
+};
+
+export const getAllCaprenterByContractorName = async (req, res) => {
+    try {
+        const { businessName, name } = req.user.userObj;
+        const { scannedName, scannedEmail } = req.body; // Assume scannedName and scannedEmail are passed in the request
+
+        // Fetch contractors based on name and businessName
+        const contractors = await Users.find({
+            role: "CONTRACTOR",
+            name,
+            businessName,
+        });
+
+        // Ensure there's at least one contractor
+        if (contractors.length === 0) {
+            return res.status(404).json({ message: "Contractor not found" });
+        }
+
+        // Extract contractor ID (assuming one contractor per request)
+        const contractorId = contractors[0]._id.toString();
+
+        // Fetch carpenters who belong to the contractor
+        const carpenters = await Users.find({
+            role: "CARPENTER",
+            "contractor.name": name,
+            "contractor.businessName": businessName,
+        });
+
+        // Filter carpenters who match the scanned name and email
+        const matchingCarpenters = carpenters.filter((carpenter) => carpenter.name === scannedName && carpenter.email === scannedEmail);
+
+        // Sum up the values of the coupons for matching carpenters
+        const totalCouponValue = await Coupons.aggregate([
+            {
+                $match: {
+                    scannedUserName: scannedName,
+                    scannedEmail: scannedEmail,
+                },
+            },
+            {
+                $group: {
+                    _id: null,
+                    totalValue: { $sum: "$value" },
+                },
+            },
+        ]);
+
+        // If there are no coupons for the scanned carpenter, set total value to 0
+        const totalValue = totalCouponValue.length > 0 ? totalCouponValue[0].totalValue : 0;
+
+        // Calculate total points for all carpenters
+        const allCarpentersTotal = carpenters.reduce((total, carpenter) => total + carpenter.points, 0);
+
+        // Fetch commissions earned for the contractor
+        const commissionLogs = await pointHistoryModel
+            .find({
+                userId: contractorId, // Use contractor ID instead of carpentersIds
+                transactionType: "CREDIT", // Assuming "CREDIT" refers to commission-related transactions
+                mobileDescription: "Commission", // Assuming "Commission Earned" is the description for commission transactions
+            })
+            .exec();
+
+        // Calculate total commission earned
+        const totalCommission = commissionLogs.reduce((total, log) => total + log.amount, 0);
+
+        // Prepare response data
+        const result = {
+            data: {
+                name,
+                businessName,
+                allCarpenters: carpenters.map(({ name, image, points }) => ({ name, image, points })),
+                allCarpentersTotal,
+                totalCommission, // Add total commission
+                totalCouponValue: totalValue, // Add total coupon value
             },
         };
 
@@ -2297,6 +2466,28 @@ export const getAllContractors = async (req, res) => {
         }
 
         res.status(200).json(contractors);
+    } catch (err) {
+        res.status(500).json({ message: "Server error" });
+    }
+};
+
+export const getContractorUsingPhone = async (req, res) => {
+    try {
+        const { phone } = req.body; // Get phone from request body
+        let filter = { role: "CONTRACTOR" }; // Default filter for contractors
+
+        if (phone) {
+            filter.phone = phone; // Add phone filter if provided
+        }
+
+        // Use findOne to get a single contractor
+        const contractor = await Users.findOne(filter).select("name phone businessName");
+
+        if (!contractor) {
+            return res.status(404).json({ message: "No contractor found" });
+        }
+
+        res.status(200).json({ contractor: contractor });
     } catch (err) {
         res.status(500).json({ message: "Server error" });
     }

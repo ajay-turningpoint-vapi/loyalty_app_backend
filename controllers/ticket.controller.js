@@ -24,7 +24,7 @@ exports.createTicket = async (req, res) => {
 exports.getTickets = async (req, res) => {
     try {
         console.log(req.user);
-        
+
         const { role, name } = req.user; // Assuming the user role and userName are attached to the request after authentication
 
         let tickets;
@@ -37,6 +37,18 @@ exports.getTickets = async (req, res) => {
                 _id: -1,
             });
         }
+
+        res.status(200).json({ message: "Tickets fetched successfully", tickets });
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ error: "Error fetching tickets" });
+    }
+};
+
+exports.getTicketsAdmin = async (req, res) => {
+    try {
+        // Fetch all tickets from the Ticket collection, sorted by _id in descending order
+        const tickets = await Ticket.find().sort({ _id: -1 });
 
         res.status(200).json({ message: "Tickets fetched successfully", tickets });
     } catch (error) {

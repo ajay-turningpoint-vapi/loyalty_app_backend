@@ -4,6 +4,8 @@ import express from "express";
 import mongoose from "mongoose";
 import logger from "morgan";
 import path from "path";
+import { wss } from "./bin/www";
+
 import { CONFIG } from "./helpers/Config";
 import { errorHandler } from "./helpers/ErrorHandler";
 import attribute from "./routes/attribute.routes";
@@ -115,10 +117,8 @@ app.get("/backup", async (req, res) => {
 const job = schedule.scheduleJob("*/30 * * * * *", function () {
     let date = format(new Date(), "yyyy-MM-dd");
     let time = format(new Date(), "HH:mm");
-    // let time2 = format(new Date(), "HH:mm:ss");
     console.log("RUNNING", date, time);
-    checkContest(date, time);
-    // checkContestWinners(date, time2);
+    checkContest(date, time,wss); 
 });
 
 const activityLogsDeleteJob = schedule.scheduleJob("0 0 * * 0#2", async () => {

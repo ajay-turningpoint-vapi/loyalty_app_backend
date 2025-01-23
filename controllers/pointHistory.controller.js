@@ -192,7 +192,7 @@ export const getPointHistoryMobile = async (req, res, next) => {
 //     }
 // };
 
-export const pointsRedeem = async (req, res, next) => {
+export const pointsRedeemOLd = async (req, res, next) => {
     try {
         let userObj = await Users.findById(req.user.userId).exec();
         let points = req.body.points;
@@ -257,6 +257,12 @@ export const pointsRedeem = async (req, res, next) => {
     }
 };
 
+export const pointsRedeem = async (req, res, next) => {
+    try {
+    } catch (err) {
+        next(err);
+    }
+};
 export const updatePointHistoryStatus = async (req, res, next) => {
     try {
         console.log(req.params, "params");

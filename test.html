@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>WebSocket Test</title>
+    <style>
+      body {
+        font-family: Arial, sans-serif;
+        margin: 50px;
+      }
+      #messages {
+        margin-top: 20px;
+        padding: 10px;
+        border: 1px solid #ccc;
+        height: 200px;
+        overflow-y: auto;
+        background-color: #f9f9f9;
+      }
+      .message {
+        padding: 5px;
+        margin-bottom: 10px;
+        background-color: #e0f7fa;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>WebSocket Test - WINNER UPDATE</h1>
+    <button onclick="connectWebSocket()">Connect to WebSocket</button>
+    <div id="messages"></div>
+
+    <script>
+      let ws;
+
+      // Function to connect to the WebSocket server
+      function connectWebSocket() {
+        // Replace this with the actual WebSocket URL of your server
+        const wsUrl = "ws://localhost:4023"; // Or "wss://your-server-url.com"
+
+        // Establish WebSocket connection
+        ws = new WebSocket(wsUrl);
+
+        // Open connection
+        ws.onopen = () => {
+          displayMessage("Connected to WebSocket server.");
+        };
+
+        // Handle incoming messages
+        ws.onmessage = (event) => {
+          const message = JSON.parse(event.data);
+
+          // Check if the message type is 'WINNER UPDATE'
+          if (message.type === "WINNER UPDATE") {
+            displayMessage(`Received WINNER UPDATE: ${message.message}`);
+          }
+        };
+
+        // Handle WebSocket errors
+        ws.onerror = (error) => {
+          displayMessage(`WebSocket Error: ${error}`);
+        };
+
+        // Handle WebSocket close event
+        ws.onclose = () => {
+          displayMessage("WebSocket connection closed.");
+        };
+      }
+
+      // Function to display messages in the div
+      function displayMessage(msg) {
+        const messagesDiv = document.getElementById("messages");
+        const messageDiv = document.createElement("div");
+        messageDiv.classList.add("message");
+        messageDiv.textContent = msg;
+        messagesDiv.appendChild(messageDiv);
+
+        // Scroll to the bottom to see the latest message
+        messagesDiv.scrollTop = messagesDiv.scrollHeight;
+      }
+    </script>
+  </body>
+</html>

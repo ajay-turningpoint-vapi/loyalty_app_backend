@@ -99,7 +99,7 @@ export const generateUid = async () => {
 };
 
 export const randomNumberGenerator = () => {
-    const values = [100, 200, 300, 400, 500];
+    const values = [300, 400, 500, 600, 700, 800, 900, 1000];
     const randomIndex = Math.floor(Math.random() * values.length);
     return values[randomIndex];
 };

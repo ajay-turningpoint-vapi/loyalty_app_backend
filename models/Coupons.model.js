@@ -22,6 +22,8 @@ let Coupons = mongoose.Schema(
         scanLocation: String,
         scannedUserName: String,
         scannedEmail: String,
+        contractorTransactionId: String,
+
     },
 
     { timestamps: true }

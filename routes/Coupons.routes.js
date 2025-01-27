@@ -13,6 +13,7 @@ import {
     getAllCouponsAnalytics,
     getActiveCouponsExcel,
     getUsedCouponsforMap,
+    couponMultipleDelete,
 } from "../controllers/coupons.controller";
 import { authorizeJwt } from "../middlewares/auth.middleware";
 
@@ -31,5 +32,6 @@ router.get("/getActiveCouponsQrExcel", getActiveCouponsExcel);
 router.post("/addMultipleCoupons", addMultipleCoupons);
 router.post("/applyCoupon", authorizeJwt, applyCoupon);
 router.post("/generateCoupon", authorizeJwt, generateCoupon);
+router.delete("/multiple-delete", couponMultipleDelete);
 
 export default router;

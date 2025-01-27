@@ -45,7 +45,7 @@ function addSeconds(timeString, secondsToAdd) {
     let totalSeconds = hours * 3600 + minutes * 60 + seconds + 30;
 
     // Add seconds to total seconds
-    totalSeconds += secondsToAdd ;
+    totalSeconds += secondsToAdd;
 
     // Calculate hours, minutes, and remaining seconds
     const newHours = Math.floor(totalSeconds / 3600);

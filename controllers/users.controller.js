@@ -313,44 +313,7 @@ export const refreshToken = async (req, res) => {
     }
 };
 
-export const googleLoginOld = async (req, res) => {
-    try {
-        const { idToken, fcmToken } = req.body;
-        console.log(req.body);
-        const decodedToken = await admin.auth().verifyIdToken(idToken);
-        const { uid, name, email, picture } = decodedToken;
-        const existingUser = await Users.findOne({ uid: uid });
-        if (existingUser) {
-            if (existingUser.uid !== uid) {
-                throw { status: 400, message: "GoogleId or phone number do not match" };
-            }
-
-            let accessToken = await generateAccessJwt({
-                userId: existingUser?._id,
-                role: existingUser?.role,
-                name: existingUser?.name,
-                phone: existingUser?.phone,
-                email: existingUser?.email,
-                uid: existingUser.uid,
-            });
-
-            existingUser.fcmToken = fcmToken;
-
-            await existingUser.save();
-            res.status(200).json({ message: "LogIn Successful", status: true, token: accessToken });
-        } else {
-            res.status(200).json({ message: "User not registered", status: false });
-        }
-    } catch (error) {
-        console.error(error);
-        if (error.status) {
-            res.status(error.status).json({ error: error.message, status: false });
-        } else {
-            res.status(500).json({ error: "Internal Server Error", status: false });
-        }
-    }
-};
-export const registerUser = async (req, res, next) => {
+export const registerUserWorking = async (req, res, next) => {
     try {
         const { phone, role, idToken, fcmToken, refCode, businessName } = req.body;
 
@@ -435,6 +398,115 @@ export const registerUser = async (req, res, next) => {
         const registrationBody = `🎉 Turning Point में आपका स्वागत है!`;
         await sendNotificationMessage(newUser._id, registrationTitle, registrationBody, "New User");
         // sendWhatsAppMessage("newuser", "918975944936", newUser.name, newUser.phone, newUser.email);
+        res.status(200).json({ message: "User Created", data: newUser, token: accessToken, status: true });
+    } catch (error) {
+        console.error("register user", error);
+        next(error);
+    }
+};
+
+export const registerUser = async (req, res, next) => {
+    try {
+        const { phone, role, idToken, fcmToken, refCode, businessName } = req.body;
+
+        const userExistCheck = await Users.findOne({ $or: [{ phone }, { email: new RegExp(`^${req.body.email}$`, "i") }] });
+        if (userExistCheck) {
+            throw new Error(`${ErrorMessages.EMAIL_EXISTS}`);
+        }
+        const decodedToken = await admin.auth().verifyIdToken(idToken);
+        const { uid, name, email, picture } = decodedToken;
+
+        let referrer, newUser;
+
+        if (refCode) {
+            referrer = await Users.findOne({ refCode });
+        }
+
+        if (role === "CONTRACTOR") {
+            const carpenter = await Users.findOne({ "notListedContractor.phone": phone, role: "CARPENTER" });
+            if (carpenter) {
+                carpenter.contractor.businessName = businessName || "Turning Point";
+                carpenter.contractor.name = name;
+                await carpenter.save();
+            }
+        }
+
+        const randomWord = generateRandomWord(6);
+        const points = refCode ? 500 : 100;
+        const userData = {
+            ...req.body,
+            refCode: role === "CONTRACTOR" ? randomWord : generateRandomWord(6), // Random referral code only for contractors
+            uid,
+            name,
+            email,
+            image: picture,
+            fcmToken,
+            points,
+        };
+
+        if (role === "CARPENTER" && req.body.contractor.phone !== null && req.body.contractor.phone !== "") {
+            userData.notListedContractor = { name: req.body?.contractor?.name, phone: req.body?.contractor?.phone };
+            userData.contractor = { name: "Contractor", businessName: businessName || "Turning Point" };
+        }
+        newUser = await new Users(userData).save();
+
+        await createPointlogs(
+            newUser._id,
+            points,
+            pointTransactionType.CREDIT,
+            refCode ? `${points} points for using referral code ${refCode}` : `${newUser.name} New Registration Bonous ${points}`, // Dynamic description
+            refCode ? "Referral" : "Registration",
+            "success"
+        );
+
+        if (referrer) {
+            referrer.referrals.push(newUser._id);
+            await referrer.save();
+
+            const rewardValue = randomNumberGenerator();
+            const reward = await ReferralRewards.create({
+                userId: referrer._id,
+                name: "referral_reward",
+                value: rewardValue,
+                maximumNoOfUsersAllowed: 1,
+            });
+
+            referrer.referralRewards.push(reward._id);
+            await referrer.save();
+
+            try {
+                const title = "🎉आपको रिफरल स्क्रैच कार्ड मिला है!";
+                const body = "🏆अपना इनाम देखने के लिए स्क्रैच करें!";
+                await sendNotificationMessage(referrer._id, title, body, "referral");
+            } catch (error) {
+                console.error("Error sending notification for user:", referrer._id);
+            }
+        }
+
+        const accessToken = await generateAccessJwt({
+            userId: newUser?._id,
+            phone: newUser?.phone,
+            email: newUser?.email,
+            name: newUser?.name,
+            uid: newUser?.uid,
+            fcmToken: newUser?.fcmToken,
+        });
+
+        const refreshToken = await generateRefreshJwt({
+            userId: newUser?._id,
+            phone: newUser?.phone,
+            email: newUser?.email,
+            uid: newUser?.uid,
+            name: newUser?.name,
+            fcmToken: newUser?.fcmToken,
+        });
+
+        await Token.create({ uid: newUser.uid, userId: newUser._id, token: accessToken, refreshToken, fcmToken: newUser?.fcmToken });
+
+        const registrationTitle = `👏 बधाई हो, ${newUser?.name}! 🎉`;
+        const registrationBody = `🎉 Turning Point में आपका स्वागत है!`;
+        await sendNotificationMessage(newUser._id, registrationTitle, registrationBody, "New User");
+
         res.status(200).json({ message: "User Created", data: newUser, token: accessToken, status: true });
     } catch (error) {
         console.error("register user", error);
@@ -953,13 +1025,11 @@ const updateUserOnlineStatusWithRetry = async (userId, isOnline, retries = 3) =>
 
 export const updateUserOnlineStatus = async (req, res) => {
     try {
-
-     if (!req.user || !req.user.userId) {
+        if (!req.user || !req.user.userId) {
             return res.status(401).json({ error: "User is not online" });
         }
         const { userId } = req?.user;
         const { isOnline } = req.body;
-
 
         if (typeof isOnline !== "boolean") {
             return res.status(400).json({ error: "Invalid input, 'isOnline' must be a boolean" });
@@ -1322,6 +1392,8 @@ export const getUserById = async (req, res, next) => {
 
                 if (!contestObj) {
                     userObj.autoJoinStatus = "Contest not found";
+                } else if (!userObj.isActive) {
+                    userObj.autoJoinStatus = "User is inactive and cannot join contests.";
                 } else {
                     // Check if the user has enough points to join the contest
                     const requiredPoints = contestObj.points || 0; // Default to 0 if no points specified
@@ -1924,7 +1996,7 @@ export const getUserContests = async (req, res, next) => {
 export const testupdate = async (req, res) => {
     try {
         // Update condition
-        const query = { contestId: "678f8be5a95e34e8b718f627" };
+        const query = { contestId: "679345d4c649157487e5b9ee" };
 
         // Update operation
         const update = { $set: { rank: "0", status: "join" } };
@@ -2329,11 +2401,11 @@ export const getAllCaprenterByContractorName1 = async (req, res) => {
             .find({
                 userId: { $in: carpentersIds },
                 transactionType: "CREDIT", // Assuming "CREDIT" refers to commission-related transactions
-                mobileDescription: "Commission", // Assuming "Commission Earned" is the description for commission transactions
+                mobileDescription: "Royalty", // Assuming "Royalty Earned" is the description for commission transactions
             })
             .exec();
 
-        console.log("Commission Logs:", commissionLogs); // Log commission logs to check
+        console.log("Royalty Logs:", commissionLogs); // Log commission logs to check
 
         // Calculate total commission earned by carpenters
         const totalCommission = commissionLogs.reduce((total, log) => {
@@ -2390,7 +2462,7 @@ export const getAllCaprenterByContractorName = async (req, res) => {
         const matchingCarpenters = carpenters.filter((carpenter) => carpenter.name === scannedName && carpenter.email === scannedEmail);
 
         // Sum up the values of the coupons for matching carpenters
-        const totalCouponValue = await Coupons.aggregate([
+        const totalCouponValue = await CouponsModel.aggregate([
             {
                 $match: {
                     scannedUserName: scannedName,
@@ -2416,7 +2488,7 @@ export const getAllCaprenterByContractorName = async (req, res) => {
             .find({
                 userId: contractorId, // Use contractor ID instead of carpentersIds
                 transactionType: "CREDIT", // Assuming "CREDIT" refers to commission-related transactions
-                mobileDescription: "Commission", // Assuming "Commission Earned" is the description for commission transactions
+                mobileDescription: "Royalty", // Assuming "Royalty Earned" is the description for commission transactions
             })
             .exec();
 

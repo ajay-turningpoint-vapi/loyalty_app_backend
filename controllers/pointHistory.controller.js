@@ -163,35 +163,6 @@ export const getPointHistoryMobile = async (req, res, next) => {
     }
 };
 
-// export const getPointHistoryMobile = async (req, res, next) => {
-//     try {
-//         let limit = 10;
-//         let page = 0;
-//         let sort = {};
-//         let query = {};
-//         if (req.query.limit && req.query.limit > 0) {
-//             limit = parseInt(req.query.limit);
-//         }
-
-//         if (req.query.page && req.query.page > 0) {
-//             page = parseInt(req.query.page);
-//         }
-//         if (req.query.userId) {
-//             query.userId = req.query.userId;
-//         }
-
-//         let pointHistoryArr = await pointHistory
-//             .find(query, {}, { skip: page * limit, limit: limit })
-//             .sort({ createdAt: -1 })
-//             .lean()
-//             .exec();
-
-//         res.status(200).json({ message: "List of points history", data: pointHistoryArr, limit: limit, page: page + 1, success: true });
-//     } catch (err) {
-//         next(err);
-//     }
-// };
-
 export const pointsRedeemOLd = async (req, res, next) => {
     try {
         let userObj = await Users.findById(req.user.userId).exec();

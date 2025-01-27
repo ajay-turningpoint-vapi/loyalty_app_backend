@@ -14,7 +14,8 @@ const postContestUpdates = async (contestId, validContestUsers) => {
         }
 
         // Update contest status to "CLOSED"
-        await Contest.findByIdAndUpdate(contestId, { status: "CLOSED" }).exec();
+        const response = await Contest.findByIdAndUpdate(contestId, { status: "CLOSED" }).exec();
+        console.log("Contest Closed response", response);
 
         // Step 1: Prepare the notification message
     } catch (error) {
@@ -22,7 +23,7 @@ const postContestUpdates = async (contestId, validContestUsers) => {
     }
 };
 
-export const checkContest = async (date, time, wss) => {
+export const checkContest = async (date, time) => {
     console.log("Checking contests for date and time:", date, time);
     try {
         const startDate = new Date(date);
@@ -103,27 +104,6 @@ export const checkContest = async (date, time, wss) => {
                     validContestUsers.splice(randomIndex, 1);
                 }
             }
-
-            if (contestPrizes.length > 0) {
-                const now = new Date();
-                const additionalTime = contestPrizes.length * 30 * 1000; // Prizes * 30 seconds in milliseconds
-                const combinedDateTime = new Date(now.getTime() + additionalTime).toISOString();
-
-                // Update the `getWinnersCombinedDateandTime` field
-                await Contest.findByIdAndUpdate(contest._id, { $set: { getWinnersCombinedDateandTime: combinedDateTime } }, { new: true });
-                console.log(`Updated getWinnersCombinedDateandTime for contest ${contest._id}:`, combinedDateTime);
-            }
-
-            wss.clients.forEach((client) => {
-                if (client.readyState === 1) {
-                    client.send(
-                        JSON.stringify({
-                            type: "WINNER UPDATE",
-                            message: "Winners are ready!",
-                        })
-                    );
-                }
-            });
 
             setTimeout(() => {
                 // Post-contest updates

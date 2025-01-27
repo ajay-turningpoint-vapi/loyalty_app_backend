@@ -220,7 +220,7 @@ export const deleteCouponById = async (req, res, next) => {
     }
 };
 
-export const getActiveCouponsoldWorking = async (req, res, next) => {
+export const getActiveCoupons = async (req, res, next) => {
     try {
         let query = {};
         let todayStart = new Date();
@@ -242,7 +242,7 @@ export const getActiveCouponsoldWorking = async (req, res, next) => {
     }
 };
 
-export const getActiveCoupons = async (req, res, next) => {
+export const getActiveCouponsdummy = async (req, res, next) => {
     try {
         let query = {};
         let todayStart = new Date();
@@ -617,7 +617,7 @@ export const applyCouponworking = async (req, res, next) => {
                 if (ContractorObj) {
                     const updatedContractorPoints = { points: ContractorObj.points + contractorPoints };
                     await Users.findByIdAndUpdate(ContractorObj._id, updatedContractorPoints).exec();
-                    await createPointlogs(ContractorObj._id, contractorPoints, pointTransactionType.CREDIT, contractorPointDescription, `Commission`, "success");
+                    await createPointlogs(ContractorObj._id, contractorPoints, pointTransactionType.CREDIT, contractorPointDescription, `Royalty`, "success");
                     try {
                         const title = "🎉 कमीशन प्राप्त हुआ!";
                         const body = `🏆 ${name} से आपको ${contractorPoints} पॉइंट्स मिले हैं।`;
@@ -696,6 +696,7 @@ export const applyCoupon = async (req, res, next) => {
     }
 };
 
+
 // Extracted function to handle points and logs
 const processPoints = async (UserObj, updatedCoupon, points, name, CouponObj) => {
     // Add CouponObj here
@@ -728,7 +729,7 @@ const handleContractorPoints = async (contractorName, points, couponName, Coupon
         if (ContractorObj) {
             const updatedContractorPoints = { points: ContractorObj.points + contractorPoints };
             await Users.findByIdAndUpdate(ContractorObj._id, updatedContractorPoints).exec();
-            await createPointlogs(ContractorObj._id, contractorPoints, pointTransactionType.CREDIT, contractorPointDescription, "Commission", "success");
+            await createPointlogs(ContractorObj._id, contractorPoints, pointTransactionType.CREDIT, contractorPointDescription, "Royalty", "success");
 
             // Update contractorId in the coupon
             await Coupon.findByIdAndUpdate(CouponObj._id, {
@@ -754,4 +755,33 @@ const sendContractorNotification = async (contractorId, contractorPoints, coupon
     } catch (notificationError) {
         console.error("Error sending notification:", notificationError);
     }
+};
+
+
+export const couponMultipleDelete = async (req, res, next) => {
+    // const { productName} = req.query;
+
+    try {
+      // Validate inputs
+    //   if (!productName) {
+    //     return res.status(400).json({ message: "Invalid query parameters." });
+    //   }  
+      // Delete coupons matching the criteria
+      const result = await Coupon.deleteMany(
+        {productName:"FURNIPART ADHESIVE 50 KG -DM",maximumNoOfUsersAllowed:1}
+    //     {
+    //     productName:"FIXU ADHESIVE 50 KG -DM",
+    //     maximumNoOfUsersAllowed: 1,
+    //   }
+    );
+      
+  
+      return res.status(200).json({
+        message: `${result.deletedCount} coupons deleted successfully.`,
+      });
+    } catch (error) {
+      console.error("Error deleting coupons:", error);
+      return res.status(500).json({ message: "An error occurred." });
+    }
+
 };

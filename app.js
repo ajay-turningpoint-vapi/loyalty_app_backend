@@ -4,7 +4,7 @@ import express from "express";
 import mongoose from "mongoose";
 import logger from "morgan";
 import path from "path";
-import { wss } from "./bin/www";
+
 
 import { CONFIG } from "./helpers/Config";
 import { errorHandler } from "./helpers/ErrorHandler";
@@ -118,7 +118,7 @@ const job = schedule.scheduleJob("*/30 * * * * *", function () {
     let date = format(new Date(), "yyyy-MM-dd");
     let time = format(new Date(), "HH:mm");
     console.log("RUNNING", date, time);
-    checkContest(date, time,wss); 
+    checkContest(date, time); 
 });
 
 const activityLogsDeleteJob = schedule.scheduleJob("0 0 * * 0#2", async () => {

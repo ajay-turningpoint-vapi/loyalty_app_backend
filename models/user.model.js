@@ -1,7 +1,7 @@
 import mongoose from "mongoose";
 
 import { rolesObj } from "../helpers/Constants";
-import axios from "axios";
+
 let User = mongoose.Schema(
     {
         uid: { type: String, unique: true, required: true },
@@ -62,6 +62,7 @@ let User = mongoose.Schema(
         },
 
         referrals: [{ type: mongoose.Schema.Types.ObjectId, ref: "User" }],
+        referredBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
         referralRewards: [{ type: mongoose.Schema.Types.ObjectId, ref: "ReferralRewards" }],
     },
     { timestamps: true }

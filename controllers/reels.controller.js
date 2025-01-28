@@ -56,35 +56,21 @@ export const getReelsOld = async (req, res, next) => {
 
 export const getReels = async (req, res, next) => {
     try {
-        const reelsArr = await Reels.aggregate([
-            {
-                $lookup: {
-                    from: "reellikes", // The collection name in MongoDB (should match the model's name in lowercase plural form)
-                    localField: "_id", // The field in the `reels` collection to match
-                    foreignField: "reelId", // The field in the `reellikes` collection to match
-                    as: "likes", // The resulting array of matched `reelLikes`
-                },
-            },
-            {
-                $addFields: {
-                    totalLikes: { $size: "$likes" }, // Add a `totalLikes` field containing the count of likes
-                },
-            },
-            {
-                $project: {
-                    likes: 0, // Optionally exclude the `likes` array from the result to reduce payload size
-                },
-            },
-            {
-                $sort: { createdAt: -1 }, // Sort by creation date (most recent first)
-            },
-        ]);
-
-        if (!(reelsArr.length > 0)) {
-            throw new Error("No reels created yet");
+        let reelsArr = await Reels.find().sort({ createdAt: -1 }).exec();
+        if (reelsArr.length === 0) {
+            return res.status(200).json({ message: "No reels created yet", data: [], success: true });
         }
 
-        res.status(200).json({ message: "Reels Found", data: reelsArr, success: true });
+        // Add totalLikes for each reel
+        const reelsWithLikes = await Promise.all(
+            reelsArr.map(async (reel) => {
+                const totalLikes = await ReelLikes.countDocuments({ reelId: reel._id });
+                // Creating a new object with the totalLikes field added
+                return { ...reel.toObject(), totalLikes };
+            })
+        );
+
+        res.status(200).json({ message: "Reels Found", data: reelsWithLikes, success: true });
     } catch (err) {
         next(err);
     }

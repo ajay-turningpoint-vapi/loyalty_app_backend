@@ -306,7 +306,7 @@ export const getCurrentContestold = async (req, res, next) => {
     }
 };
 
-export const getCurrentContest = async (req, res, next) => {
+export const getCurrentContestWorking = async (req, res, next) => {
     try {
         let pipeline = [
             {
@@ -351,6 +351,131 @@ export const getCurrentContest = async (req, res, next) => {
                               $gt: new Date(), // If not admin, filter only contests with future end dates
                           },
                       },
+            },
+            {
+                $sort: { combinedEndDateTime: 1 }, // Sort by end date and animation time in ascending order
+            },
+            {
+                $limit: 1, // Limit to the first result (nearest end date and animation time)
+            },
+        ];
+
+        let getCurrentContest = await Contest.aggregate(pipeline);
+
+        if (getCurrentContest.length > 0) {
+            // Convert combinedEndDateAnimationTime to Asia/Kolkata timezone first
+            let utcDate = moment(getCurrentContest[0].combinedEndDateAnimationTime); // UTC time
+            let istDate = utcDate.clone().utcOffset("+05:30"); // Convert to Asia/Kolkata (UTC +5:30)
+
+            // Fetch prize data for the current contest
+            let prizeContestArray = await Prize.find({ contestId: `${getCurrentContest[0]._id}` }).exec();
+            getCurrentContest[0].prizeArr = prizeContestArray;
+
+            // Check if the user has joined the current contest
+            if (req.user.userId) {
+                let userJoinStatus = await userContest.exists({
+                    contestId: getCurrentContest[0]._id,
+                    userId: req.user.userId,
+                    status: "join",
+                });
+                getCurrentContest[0].userJoinStatus = userJoinStatus != null;
+
+                // Count how many times the user has joined the contest
+                let userJoinCount = await userContest.countDocuments({
+                    contestId: getCurrentContest[0]._id,
+                    userId: req.user.userId,
+                    status: "join",
+                });
+                getCurrentContest[0].userJoinCount = userJoinCount;
+            }
+        }
+
+        // Respond with the modified JSON object containing information about the current contest and associated prize array
+        res.status(200).json({ message: "getCurrentContest", data: getCurrentContest, success: true });
+    } catch (err) {
+        next(err);
+    }
+};
+
+export const getCurrentContest = async (req, res, next) => {
+    try {
+        let pipeline = [
+            {
+                $addFields: {
+                    combinedStartDateTime: {
+                        $dateFromString: {
+                            dateString: {
+                                $concat: [
+                                    {
+                                        $dateToString: {
+                                            date: "$startDate",
+                                            format: "%Y-%m-%d",
+                                        },
+                                    },
+                                    "T",
+                                    "$startTime",
+                                    ":00",
+                                ],
+                            },
+                            timezone: "Asia/Kolkata",
+                        },
+                    },
+                    combinedEndDateTime: {
+                        $dateFromString: {
+                            dateString: {
+                                $concat: [
+                                    {
+                                        $dateToString: {
+                                            date: "$endDate",
+                                            format: "%Y-%m-%d", // Ensure it's in YYYY-MM-DD format
+                                        },
+                                    },
+                                    "T",
+                                    "$antimationTime", // Use animationTime, which should be in HH:mm:ss format
+                                ],
+                            },
+                            timezone: "Asia/Kolkata", // Assuming animationTime is in Asia/Kolkata time zone
+                        },
+                    },
+                },
+            },
+            {
+                $addFields: {
+                    status: {
+                        $cond: {
+                            if: {
+                                $and: [
+                                    {
+                                        $gt: ["$combinedEndDateTime", new Date()],
+                                    },
+                                    {
+                                        $lt: ["$combinedStartDateTime", new Date()],
+                                    },
+                                ],
+                            },
+                            then: "ACTIVE",
+                            else: "INACTIVE",
+                        },
+                    },
+                },
+            },
+            {
+                $match: {
+                    $and: [
+                        req.query.admin
+                            ? {}
+                            : {
+                                  combinedEndDateTime: {
+                                      $gt: new Date(),
+                                  },
+                              },
+                        {
+                            combinedStartDateTime: {
+                                $lt: new Date(),
+                            },
+                        },
+                    ],
+                },
             },
             {
                 $sort: { combinedEndDateTime: 1 }, // Sort by end date and animation time in ascending order
@@ -874,24 +999,6 @@ export const getContestAdmin = async (req, res, next) => {
         let pipeline = [
             {
                 $addFields: {
-                    combinedStartDateTime: {
-                        $dateFromString: {
-                            dateString: {
-                                $concat: [
-                                    {
-                                        $dateToString: {
-                                            date: "$startDate",
-                                            format: "%Y-%m-%d",
-                                        },
-                                    },
-                                    "T",
-                                    "$startTime",
-                                    ":00",
-                                ],
-                            },
-                            timezone: "Asia/Kolkata",
-                        },
-                    },
                     combinedEndDateTime: {
                         $dateFromString: {
                             dateString: {
@@ -917,14 +1024,7 @@ export const getContestAdmin = async (req, res, next) => {
                     status: {
                         $cond: {
                             if: {
-                                $and: [
-                                    {
-                                        $gt: ["$combinedEndDateTime", new Date()],
-                                    },
-                                    {
-                                        $lt: ["$combinedStartDateTime", new Date()],
-                                    },
-                                ],
+                                $gt: ["$combinedEndDateTime", new Date()],
                             },
                             then: "ACTIVE",
                             else: "INACTIVE",
@@ -943,11 +1043,6 @@ export const getContestAdmin = async (req, res, next) => {
                                       $gt: new Date(),
                                   },
                               },
-                        {
-                            combinedStartDateTime: {
-                                $lt: new Date(),
-                            },
-                        },
                     ],
                 },
             },

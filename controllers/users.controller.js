@@ -405,7 +405,7 @@ export const registerUserWorking = async (req, res, next) => {
     }
 };
 
-export const registerUser = async (req, res, next) => {
+export const registerUserlatest = async (req, res, next) => {
     try {
         const { phone, role, idToken, fcmToken, refCode, businessName } = req.body;
 
@@ -507,6 +507,115 @@ export const registerUser = async (req, res, next) => {
         const registrationBody = `🎉 Turning Point में आपका स्वागत है!`;
         await sendNotificationMessage(newUser._id, registrationTitle, registrationBody, "New User");
 
+        res.status(200).json({ message: "User Created", data: newUser, token: accessToken, status: true });
+    } catch (error) {
+        console.error("register user", error);
+        next(error);
+    }
+};
+
+export const registerUser = async (req, res, next) => {
+    try {
+        const { phone, role, idToken, fcmToken, refCode, businessName } = req.body;
+
+        // Check if user already exists
+        const userExistCheck = await Users.findOne({ $or: [{ phone }, { email: new RegExp(`^${req.body.email}$`, "i") }] });
+        if (userExistCheck) {
+            throw new Error("User with this phone or email already exists");
+        }
+
+        // Verify ID token and extract user details
+        const decodedToken = await admin.auth().verifyIdToken(idToken);
+        const { uid, name, email, picture } = decodedToken;
+
+        let referrer, newUser;
+
+        // Check if ref code is provided
+        if (refCode) {
+            referrer = await Users.findOne({ refCode });
+        }
+
+        // Update contractor details if role is "CONTRACTOR"
+        if (role === "CONTRACTOR") {
+            const carpenter = await Users.findOne({ "notListedContractor.phone": phone, role: "CARPENTER" });
+            if (carpenter) {
+                carpenter.contractor.businessName = businessName || "Turning Point";
+                carpenter.contractor.name = name;
+                await carpenter.save();
+            }
+        }
+
+        const randomWord = generateRandomWord(6); // Generate random referral code
+        const points = refCode ? 500 : 100; // Award points based on referral
+        const userData = {
+            ...req.body,
+            refCode: role === "CONTRACTOR" ? randomWord : generateRandomWord(6),
+            uid,
+            name,
+            email,
+            image: picture,
+            fcmToken,
+            points,
+            isActive: false, // Set initially as false
+        };
+
+        // Handle contractor data for CARPENTER role
+        if (role === "CARPENTER" && req.body.contractor.phone) {
+            userData.notListedContractor = { name: req.body?.contractor?.name, phone: req.body?.contractor?.phone };
+            userData.contractor = { name: "Contractor", businessName: businessName || "Turning Point" };
+        }
+
+        // Create new user
+        newUser = await new Users(userData).save();
+
+        // If the user is referred by someone, update the referrals and referredBy
+        if (referrer) {
+            referrer.referrals.push(newUser._id); // Add the new user to referrer's referrals
+            newUser.referredBy = referrer._id; // Set the referredBy field for the new user
+            await referrer.save(); // Save the referrer
+            await newUser.save(); // Save the new user
+        }
+
+        // Log points for new registration
+        await createPointlogs(
+            newUser._id,
+            points,
+            pointTransactionType.CREDIT,
+            refCode ? `${points} points for using referral code ${refCode}` : `${newUser.name} New Registration Bonus ${points}`,
+            refCode ? "Referral" : "Registration",
+            "success"
+        );
+
+        // No points for referrer yet since user is not active
+
+        // Generate access and refresh tokens
+        const accessToken = await generateAccessJwt({
+            userId: newUser._id,
+            phone: newUser.phone,
+            email: newUser.email,
+            name: newUser.name,
+            uid: newUser.uid,
+            fcmToken: newUser.fcmToken,
+        });
+
+        const refreshToken = await generateRefreshJwt({
+            userId: newUser._id,
+            phone: newUser.phone,
+            email: newUser.email,
+            name: newUser.name,
+            uid: newUser.uid,
+            fcmToken: newUser.fcmToken,
+        });
+
+        // Save tokens
+        await Token.create({ uid: newUser.uid, userId: newUser._id, token: accessToken, refreshToken, fcmToken: newUser.fcmToken });
+
+        // Send registration notification
+        const registrationTitle = `👏 बधाई हो, ${newUser?.name}! 🎉`;
+        const registrationBody = `🎉 Turning Point में आपका स्वागत है!`;
+        await sendNotificationMessage(newUser._id, registrationTitle, registrationBody, "New User");
+
+        // Respond with success
         res.status(200).json({ message: "User Created", data: newUser, token: accessToken, status: true });
     } catch (error) {
         console.error("register user", error);
@@ -952,7 +1061,7 @@ export const updateUserProfileImage = async (req, res, next) => {
 };
 
 // routes/updateUserStatus.js
-export const updateUserStatus = async (req, res, next) => {
+export const updateUserStatusWorking = async (req, res, next) => {
     try {
         const userId = req.params.id;
         const { status } = req.body;
@@ -974,6 +1083,65 @@ export const updateUserStatus = async (req, res, next) => {
             const body = "🎉 आपका प्रोफ़ाइल मंज़ूर हो गया! स्वागत है!";
 
             await sendNotificationMessage(userId, title, body, "User Status");
+        }
+    } catch (err) {
+        next(err);
+    }
+};
+
+export const updateUserStatus = async (req, res, next) => {
+    try {
+        const userId = req.params.id;
+        const { status } = req.body;
+        let userObj = await Users.findById(userId).exec();
+
+        console.log("userObj", userObj);
+
+        if (!userObj) {
+            throw new Error("User Not found");
+        }
+
+        // Update user status
+        await Users.findByIdAndUpdate(userId, { isActive: status }).exec();
+        res.status(201).json({ message: "User Active Status Updated Successfully", success: true });
+
+        // Send notification based on user status
+        if (status === false) {
+            const title = "🛑 ध्यान दें: प्रोफाइल को एडमिन ने डिसेबल किया";
+            const body = "आपकी प्रोफ़ाइल डिसेबल हो गई है। सहायता के लिए संपर्क करें।";
+            await sendNotificationMessage(userId, title, body, "User Status");
+        } else {
+            const title = "🌟 बधाई हो! आपका प्रोफ़ाइल मंज़ूर हो गया है!";
+            const body = "🎉 आपका प्रोफ़ाइल मंज़ूर हो गया! स्वागत है!";
+            await sendNotificationMessage(userId, title, body, "User Status");
+
+            // Check if the user has a referrer (referredBy)
+            if (userObj.referredBy) {
+                const referrer = await Users.findById(userObj.referredBy).exec();
+                console.log("referrer", referrer);
+
+                if (referrer && referrer.isActive) {
+                    // Award 1000 points to the referrer
+                    referrer.points += 1000;
+                    await referrer.save();
+
+                    // Log points for the referrer
+                    await createPointlogs(referrer._id, 1000, pointTransactionType.CREDIT, `${1000} points for referring ${userObj.name}`, "Referral", "success");
+
+                    // Send notification to the referrer
+                    try {
+                        const title = "🎉 Congratulations! You've earned referral points!";
+                        const body = "You received 1000 points for referring a new user!";
+                        await sendNotificationMessage(referrer._id, title, body, "referral");
+                    } catch (error) {
+                        console.error("Error sending notification to referrer:", error);
+                    }
+
+                    // Add the referred user to the referrer's referrals array
+                    referrer.referrals.push(userObj._id);
+                    await referrer.save();
+                }
+            }
         }
     } catch (err) {
         next(err);
@@ -1092,7 +1260,7 @@ export const getUsersAnalytics = async (req, res, next) => {
     }
 };
 
-export const getUserActivityAnalysisOld = async (req, res, next) => {
+export const getUserActivityAnalysis = async (req, res, next) => {
     try {
         const { startDate, endDate } = req.query;
 
@@ -1209,71 +1377,6 @@ export const getContractors = async (req, res, next) => {
         next(error);
     }
 };
-export const getUserActivityAnalysis = async (req, res) => {
-    try {
-        const { startDate, endDate } = req.query;
-
-        const startDateParsed = startDate ? new Date(startDate) : new Date("2020-01-01");
-        const endDateParsed = endDate ? new Date(endDate) : new Date();
-
-        if (isNaN(startDateParsed) || isNaN(endDateParsed) || startDateParsed > endDateParsed) {
-            return res.status(400).json({ success: false, message: "Invalid or inconsistent date range" });
-        }
-
-        const users = await Users.aggregate([
-            {
-                $match: {
-                    name: { $ne: "Contractor" },
-                    role: { $ne: "ADMIN" },
-                    createdAt: { $gte: startDateParsed, $lte: endDateParsed },
-                },
-            },
-            {
-                $lookup: {
-                    from: "reellikes", // Ensure this is the correct collection name in MongoDB
-                    localField: "_id", // User's _id field
-                    foreignField: "userId", // Refers to the userId field in the reelLikes collection
-                    as: "reelsLikes", // Alias for the results
-                },
-            },
-            {
-                $lookup: {
-                    from: "usercontests",
-                    localField: "_id",
-                    foreignField: "userId",
-                    as: "userContests",
-                },
-            },
-            {
-                $project: {
-                    name: 1,
-                    phone: 1,
-                    role: 1,
-                    createdAt: 1,
-                    reelsLikeCount: { $size: "$reelsLikes" },
-                    contestJoinCount: { $size: "$userContests" },
-                    contestWinCount: {
-                        $size: {
-                            $filter: {
-                                input: "$userContests",
-                                as: "contest",
-                                cond: { $eq: ["$$contest.status", "win"] },
-                            },
-                        },
-                    },
-                },
-            },
-        ]);
-
-        const totalReelsLikeCount = users.reduce((acc, user) => acc + user.reelsLikeCount, 0);
-        const totalContestJoinCount = users.reduce((acc, user) => acc + user.contestJoinCount, 0);
-
-        res.status(200).json({ success: true, data: users, totalReelsLikeCount, totalContestJoinCount });
-    } catch (error) {
-        console.error("Error fetching user activity analysis:", error);
-        res.status(500).json({ success: false, message: "Internal Server Error" });
-    }
-};
 
 export const getUserByIdwithDateCheck = async (req, res, next) => {
     try {
@@ -1367,7 +1470,7 @@ export const getUserByIdwithDateCheck = async (req, res, next) => {
     }
 };
 
-export const getUserById = async (req, res, next) => {
+export const getUserByIdOld = async (req, res, next) => {
     try {
         let userObj = await Users.findById(req.params.id).lean().exec();
         if (!userObj) {
@@ -1383,47 +1486,124 @@ export const getUserById = async (req, res, next) => {
         userObj.contestWonCount = contestWonCount;
         userObj.contestUniqueWonCount = contestUniqueWonCount?.length ? contestUniqueWonCount?.length : 0;
 
-        if (req.query.contestId && req.query.contestId !== "null") {
-            const contestId = req.query.contestId;
+        console.log("userObj", userObj.isActive);
+        if (userObj.isActive) {
+            if (req.query.contestId && req.query.contestId !== "null") {
+                const contestId = req.query.contestId;
 
-            try {
-                // Fetch the contest by the provided contestId
-                const contestObj = await Contest.findById(contestId).exec();
+                try {
+                    // Fetch the contest by the provided contestId
+                    const contestObj = await Contest.findById(contestId).exec();
 
-                if (!contestObj) {
-                    userObj.autoJoinStatus = "Contest not found";
-                } else if (!userObj.isActive) {
-                    userObj.autoJoinStatus = "User is inactive and cannot join contests.";
-                } else {
-                    // Check if the user has enough points to join the contest
-                    const requiredPoints = contestObj.points || 0; // Default to 0 if no points specified
-
-                    if (userObj.points >= requiredPoints) {
-                        const joinCount = Math.floor(userObj.points / requiredPoints); // Calculate how many times user can join
-
-                        for (let i = 0; i < joinCount; i++) {
-                            await autoJoinContest(contestId, userObj._id);
-                        }
-
-                        // Deduct points after joining the contest
-                        const totalPointsUsed = joinCount * requiredPoints;
-                        userObj.points -= totalPointsUsed;
-                        await Users.updateOne({ _id: userObj._id }, { points: userObj.points });
-
-                        // Refresh user data
-                        userObj = await Users.findById(req.params.id).lean().exec();
-                        userObj.autoJoinStatus = `User auto-joined the contest ${joinCount} times`;
+                    if (!contestObj) {
+                        userObj.autoJoinStatus = "Contest not found";
                     } else {
-                        userObj.autoJoinStatus = `Not enough points to join the contest. Required: ${requiredPoints}, Available: ${userObj.points}`;
+                        // Check if the user has enough points to join the contest
+                        const requiredPoints = contestObj.points || 0; // Default to 0 if no points specified
+
+                        if (userObj.points >= requiredPoints) {
+                            const joinCount = Math.floor(userObj.points / requiredPoints); // Calculate how many times user can join
+
+                            for (let i = 0; i < joinCount; i++) {
+                                await autoJoinContest(contestId, userObj._id);
+                            }
+
+                            // Deduct points after joining the contest
+                            const totalPointsUsed = joinCount * requiredPoints;
+                            userObj.points -= totalPointsUsed;
+                            await Users.updateOne({ _id: userObj._id }, { points: userObj.points });
+
+                            // Refresh user data
+                            userObj = await Users.findById(req.params.id).lean().exec();
+                            userObj.autoJoinStatus = `User auto-joined the contest ${joinCount} times`;
+                        } else {
+                            userObj.autoJoinStatus = `Not enough points to join the contest. Required: ${requiredPoints}, Available: ${userObj.points}`;
+                        }
                     }
+                } catch (error) {
+                    userObj.autoJoinStatus = "Auto-join failed: " + error.message;
+                    console.error(userObj.autoJoinStatus);
                 }
-            } catch (error) {
-                userObj.autoJoinStatus = "Auto-join failed: " + error.message;
-                console.error(userObj.autoJoinStatus);
+            } else {
+                userObj.autoJoinStatus = "No contest ID provided";
+                console.log(userObj.autoJoinStatus);
+            }
+        }
+
+        res.status(200).json({ message: "User found", data: userObj, success: true });
+    } catch (error) {
+        console.error(error);
+        next(error);
+    }
+};
+
+export const getUserById = async (req, res, next) => {
+    try {
+        let userObj = await Users.findById(req.params.id).lean().exec();
+        if (!userObj) {
+            return res.status(404).json({ message: "User not found", success: false });
+        }
+
+        // Fetch contest participation details
+        const contestParticipationCount = await UserContest.find({ userId: userObj._id }).count().exec();
+        const contestsParticipatedInCount = await UserContest.find({ userId: userObj._id }).distinct("contestId").exec();
+        const contestUniqueWonCount = await UserContest.find({ userId: userObj._id, status: "win" }).distinct("contestId").exec();
+        const contestWonCount = await UserContest.find({ userId: userObj._id, status: "win" }).count().exec();
+
+        // Add contest-related data to the user object
+        userObj.contestParticipationCount = contestParticipationCount;
+        userObj.contestsParticipatedInCount = contestsParticipatedInCount.length;
+        userObj.contestWonCount = contestWonCount;
+        userObj.contestUniqueWonCount = contestUniqueWonCount?.length || 0;
+
+        console.log("userObj.isActive:", userObj.isActive);
+
+        // Only allow auto-join if the user is active
+        if (userObj.isActive === true) {
+            if (req.query.contestId && req.query.contestId !== "null") {
+                const contestId = req.query.contestId;
+
+                try {
+                    // Fetch the contest by the provided contestId
+                    const contestObj = await Contest.findById(contestId).exec();
+
+                    if (!contestObj) {
+                        userObj.autoJoinStatus = "Contest not found";
+                    } else {
+                        // Check if the user has enough points to join the contest
+                        const requiredPoints = contestObj.points || 0; // Default to 0 if no points specified
+
+                        console.log("requiredPoints", requiredPoints);
+
+                        if (userObj.points >= requiredPoints) {
+                            const joinCount = Math.floor(userObj.points / requiredPoints); // Calculate how many times user can join
+
+                            for (let i = 0; i < joinCount; i++) {
+                                await autoJoinContest(contestId, userObj._id);
+                            }
+
+                            // Deduct points after joining the contest
+                            const totalPointsUsed = joinCount * requiredPoints;
+                            userObj.points -= totalPointsUsed;
+                            await Users.updateOne({ _id: userObj._id }, { points: userObj.points });
+
+                            // Refresh user data
+                            userObj = await Users.findById(req.params.id).lean().exec();
+                            userObj.autoJoinStatus = `User auto-joined the contest ${joinCount} times`;
+                        } else {
+                            userObj.autoJoinStatus = `Not enough points to join the contest. Required: ${requiredPoints}, Available: ${userObj.points}`;
+                        }
+                    }
+                } catch (error) {
+                    userObj.autoJoinStatus = "Auto-join failed: " + error.message;
+                    console.error(userObj.autoJoinStatus);
+                }
+            } else {
+                userObj.autoJoinStatus = "No contest ID provided";
+                console.log(userObj.autoJoinStatus);
             }
         } else {
-            userObj.autoJoinStatus = "No contest ID provided";
-            console.log(userObj.autoJoinStatus);
+            console.log("User is not active; skipping auto-join logic.");
         }
 
         res.status(200).json({ message: "User found", data: userObj, success: true });
@@ -1996,7 +2176,7 @@ export const getUserContests = async (req, res, next) => {
 export const testupdate = async (req, res) => {
     try {
         // Update condition
-        const query = { contestId: "679345d4c649157487e5b9ee" };
+        const query = { contestId: "678f8be5a95e34e8b718f627" };
 
         // Update operation
         const update = { $set: { rank: "0", status: "join" } };

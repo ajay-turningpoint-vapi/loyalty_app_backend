@@ -16,4 +16,6 @@ let reels = mongoose.Schema(
     { timestamps: true }
 );
 
+
+reels.index({ fileUrl: 1 });
 export default mongoose.model("reels", reels);

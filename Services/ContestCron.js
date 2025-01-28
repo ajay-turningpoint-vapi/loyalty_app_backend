@@ -83,10 +83,25 @@ export const checkContest = async (date, time) => {
                 }
 
                 // Get a random user from the valid users list
-                const randomIndex = Math.floor(Math.random() * validContestUsers.length);
-                const randomUser = validContestUsers[randomIndex];
+                let randomIndex = Math.floor(Math.random() * validContestUsers.length);
+                let randomUser = validContestUsers[randomIndex];
 
-                const userPrizeCount = userPrizeCounts[randomUser.userId] || 0;
+                let userPrizeCount = userPrizeCounts[randomUser?.userId] || 0;
+
+                if (userPrizeCount >= 2) {
+                    let flag = 0;
+                    while (flag == 0) {
+                        randomIndex = Math.floor(Math.random() * validContestUsers.length);
+                        randomUser = validContestUsers[randomIndex];
+                        userPrizeCount = userPrizeCounts[randomUser?.userId] || 0;
+
+                        if (userPrizeCount < 2) {
+                            flag = 1;
+                        } else {
+                            validContestUsers.splice(randomIndex, 1);
+                        }
+                    }
+                }
 
                 if (userPrizeCount < 2) {
                     // Allocate the prize to the user
@@ -105,26 +120,12 @@ export const checkContest = async (date, time) => {
                 }
             }
 
+        
+
             setTimeout(() => {
                 // Post-contest updates
                 postContestUpdates(contest._id, validContestUsers);
             }, 1000);
-        }
-
-        const userData = await userModel
-            .find({ role: { $ne: "ADMIN" }, name: { $ne: "Contractor" } })
-            .lean()
-            .exec();
-        const title = "🎉 लकी ड्रा के नतीजे अब घोषित होने वाले हैं!";
-        const body = "🏆 अब जानिए कौन जीता! 🎉";
-        for (const user of userData) {
-            try {
-                await sendNotificationMessage(user._id, title, body, "contestResult");
-
-                console.log(`Notification sent to ${user._id}: ${title}: ${body}`);
-            } catch (error) {
-                console.error(`Failed to send notification to ${user.name} (${user.phone}): ${error.message}`);
-            }
         }
 
         console.log("Contest check completed successfully:", startDate.getTime(), time);
@@ -255,3 +256,19 @@ const isClientReady = async () => {
         return false;
     }
 };
+
+// const userData = await userModel
+//     .find({ role: { $ne: "ADMIN" }, name: { $ne: "Contractor" } })
+//     .lean()
+//     .exec();
+// const title = "🎉 लकी ड्रा के नतीजे अब घोषित होने वाले हैं!";
+// const body = "🏆 अब जानिए कौन जीता! 🎉";
+// for (const user of userData) {
+//     try {
+//         await sendNotificationMessage(user._id, title, body, "contestResult");
+
+//         console.log(`Notification sent to ${user._id}: ${title}: ${body}`);
+//     } catch (error) {
+//         console.error(`Failed to send notification to ${user.name} (${user.phone}): ${error.message}`);
+//     }
+// }

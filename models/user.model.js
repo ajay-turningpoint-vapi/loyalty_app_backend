@@ -64,6 +64,9 @@ let User = mongoose.Schema(
         referrals: [{ type: mongoose.Schema.Types.ObjectId, ref: "User" }],
         referredBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
         referralRewards: [{ type: mongoose.Schema.Types.ObjectId, ref: "ReferralRewards" }],
+        referralPointsAwarded: { type: Boolean, default: false },
+        rewardedReferrals: [{ type: mongoose.Schema.Types.ObjectId, ref: "Users" }],
+
     },
     { timestamps: true }
 );

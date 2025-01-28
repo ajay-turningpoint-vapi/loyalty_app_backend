@@ -556,7 +556,7 @@ export const registerUser = async (req, res, next) => {
             image: picture,
             fcmToken,
             points,
-            isActive: false, // Set initially as false
+            // isActive: false, 
         };
 
         // Handle contractor data for CARPENTER role
@@ -687,7 +687,7 @@ export const applyRewards = async (req, res, next) => {
     }
 };
 
-export const getUserReferralsReportById = async (req, res, next) => {
+export const getUserReferralsReportByIdScratchCard = async (req, res, next) => {
     try {
         const userId = req.params.id;
         const user = await Users.findById(userId).populate("referrals", "name").populate("referralRewards");
@@ -716,6 +716,39 @@ export const getUserReferralsReportById = async (req, res, next) => {
                 pendingRewards: pendingRewards, // Include pending rewards array in the response
                 totalReferrals: totalReferrals,
                 totalRewardPointsEarned: totalRewardPointsEarned,
+            },
+        });
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ error: "Server error" });
+    }
+};
+
+export const getUserReferralsReportById = async (req, res, next) => {
+    try {
+        const userId = req.params.id;
+
+        // Fetch the user and populate referrals
+        const user = await Users.findById(userId).populate("referrals", "name email phone");
+
+        if (!user) {
+            return res.status(404).json({ message: "User not found" });
+        }
+
+        // Calculate totalRewardPointsEarned based on rewardedReferrals
+        const totalReferrals = user.referrals.length;
+        const totalRewardPointsEarned = (user.rewardedReferrals || []).length * 1000; // Assuming 1000 points per referral
+
+        // Send the response
+        res.json({
+            user: {
+                _id: user._id,
+                name: user.name,
+                email: user.email,
+                phone: user.phone,
+                referrals: user.referrals, // List of referrals
+                totalReferrals: totalReferrals, // Total number of referrals
+                totalRewardPointsEarned: totalRewardPointsEarned, // Total reward points earned
             },
         });
     } catch (error) {
@@ -1089,7 +1122,7 @@ export const updateUserStatusWorking = async (req, res, next) => {
     }
 };
 
-export const updateUserStatus = async (req, res, next) => {
+export const updateUserStatusReferredBy = async (req, res, next) => {
     try {
         const userId = req.params.id;
         const { status } = req.body;
@@ -1140,6 +1173,57 @@ export const updateUserStatus = async (req, res, next) => {
                     // Add the referred user to the referrer's referrals array
                     referrer.referrals.push(userObj._id);
                     await referrer.save();
+                }
+            }
+        }
+    } catch (err) {
+        next(err);
+    }
+};
+
+export const updateUserStatus = async (req, res, next) => {
+    try {
+        const userId = req.params.id;
+        const { status } = req.body;
+        let userObj = await Users.findById(userId).exec();
+
+        console.log("userObj", userObj);
+
+        if (!userObj) {
+            throw new Error("User Not found");
+        }
+
+        // Update user status
+        await Users.findByIdAndUpdate(userId, { isActive: status }).exec();
+        res.status(201).json({ message: "User Active Status Updated Successfully", success: true });
+
+        // Send notification based on user status
+        if (status === false) {
+            const title = "🛑 ध्यान दें: प्रोफाइल को एडमिन ने डिसेबल किया";
+            const body = "आपकी प्रोफ़ाइल डिसेबल हो गई है। सहायता के लिए संपर्क करें।";
+            await sendNotificationMessage(userId, title, body, "User Status");
+        } else {
+            const title = "🌟 बधाई हो! आपका प्रोफ़ाइल मंज़ूर हो गया है!";
+            const body = "🎉 आपका प्रोफ़ाइल मंज़ूर हो गया! स्वागत है!";
+            await sendNotificationMessage(userId, title, body, "User Status");
+
+            // Check if the user has a referrer (referredBy)
+            if (userObj.referredBy) {
+                const referrer = await Users.findById(userObj.referredBy).exec();
+
+                if (referrer && referrer.isActive && !referrer.rewardedReferrals.includes(userObj._id)) {
+                    // Award points
+                    referrer.points += 1000;
+                    referrer.rewardedReferrals.push(userObj._id); // Track rewarded user
+                    await referrer.save();
+
+                    // Log points
+                    await createPointlogs(referrer._id, 1000, pointTransactionType.CREDIT, `${1000} points for referring ${userObj.name}`, "Referral", "success");
+
+                    // Send notification
+                    const title = "🎉 बधाई हो! आपको रेफरल पॉइंट्स मिला है!";
+                    const body = "आपको नए यूजर को रेफर करने के लिए 1000 पॉइंट्स मिले हैं!";
+                    await sendNotificationMessage(referrer._id, title, body, "referral");
                 }
             }
         }

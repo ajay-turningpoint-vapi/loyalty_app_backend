@@ -14,6 +14,7 @@ import {
     getActiveCouponsExcel,
     getUsedCouponsforMap,
     couponMultipleDelete,
+    getScannedCouponsByEmail,
 } from "../controllers/coupons.controller";
 import { authorizeJwt } from "../middlewares/auth.middleware";
 
@@ -27,6 +28,7 @@ router.patch("/updateById/:id", updateCouponsById);
 router.delete("/deleteById/:id", deleteCouponById);
 router.get("/getActiveCoupons", getActiveCoupons);
 router.get("/getScannedCoupons", getUsedCouponsforMap);
+router.get("/getScannedCouponsByEmail", getScannedCouponsByEmail);
 router.get("/getActiveCouponsQrZip", getActiveCouponsQrZip);
 router.get("/getActiveCouponsQrExcel", getActiveCouponsExcel);
 router.post("/addMultipleCoupons", addMultipleCoupons);

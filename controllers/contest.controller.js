@@ -2041,3 +2041,217 @@ const isClientReady = async () => {
         return false;
     }
 };
+
+const postContestUpdates = async (contestId, validContestUsers) => {
+    try {
+        // Mark remaining users as "lose"
+        if (validContestUsers.length > 0) {
+            await userContest.updateMany({ _id: { $in: validContestUsers.map((user) => user._id) } }, { status: "lose" }).exec();
+        }
+
+        // Update contest status to "CLOSED"
+        const response = await Contest.findByIdAndUpdate(contestId, { status: "CLOSED" }).exec();
+        console.log("Contest Closed response", response);
+
+        // Step 1: Prepare the notification message
+    } catch (error) {
+        console.error("Error posting contest updates:", error);
+    }
+};
+export const checkContest = async (req, res) => {
+    try {
+        // Update status to PROCESSING
+        //  (to prevent duplicate processing)
+
+        let contestId = "67988f7c04c549a72fa25375";
+        const updatedContest = await Contest.findOneAndUpdate({ _id: contestId, status: "APPROVED" }, { $set: { status: "PROCESSING" } }, { new: true }).exec();
+
+        if (!updatedContest) {
+            return res.status(409).json({ message: "Contest is already being processed by another instance" });
+        }
+
+        // Fetch prizes and users in parallel
+        const [contestPrizes, contestUsers] = await Promise.all([Prize.find({ contestId }).sort({ rank: 1 }).lean().exec(), userContest.find({ contestId, status: "join" }).lean().exec()]);
+
+        // Fetch users and create a user map
+        const userIds = contestUsers.map((contestUser) => contestUser.userId);
+        const users = await userModel
+            .find({ _id: { $in: userIds }, isBlocked: false })
+            .lean()
+            .exec();
+        const userMap = new Map(users.map((user) => [user._id.toString(), user]));
+
+        let validContestUsers = contestUsers.filter((contestUser) => {
+            const user = userMap.get(contestUser.userId.toString());
+            return user && !user.isBlocked;
+        });
+
+        const userPrizeCounts = {}; // Track how many prizes each user gets
+        const allocatedPrizeIds = new Set(); // Track allocated prize IDs
+
+        // **EXACT SAME PRIZE ALLOCATION LOGIC AS REQUESTED**
+        for (const prize of contestPrizes) {
+            // Skip if prize is already allocated or no valid users left
+            if (allocatedPrizeIds.has(prize._id) || validContestUsers.length === 0) {
+                break;
+            }
+
+            // Get a random user from the valid users list
+            let randomIndex = Math.floor(Math.random() * validContestUsers.length);
+            let randomUser = validContestUsers[randomIndex];
+
+            let userPrizeCount = userPrizeCounts[randomUser?.userId] || 0;
+
+            if (userPrizeCount >= 2) {
+                let flag = 0;
+                while (flag == 0) {
+                    randomIndex = Math.floor(Math.random() * validContestUsers.length);
+                    randomUser = validContestUsers[randomIndex];
+                    userPrizeCount = userPrizeCounts[randomUser?.userId] || 0;
+
+                    if (userPrizeCount < 2) {
+                        flag = 1;
+                    } else {
+                        validContestUsers.splice(randomIndex, 1);
+                    }
+                }
+            }
+
+            if (userPrizeCount < 2) {
+                // Allocate the prize to the user
+                await userContest
+                    .findByIdAndUpdate(randomUser?._id, {
+                        status: "win",
+                        rank: prize.rank,
+                    })
+                    .exec();
+
+                userPrizeCounts[randomUser.userId] = userPrizeCount + 1; // Update prize count
+                allocatedPrizeIds.add(prize._id); // Mark prize as allocated
+
+                // Remove the user from valid users
+                validContestUsers.splice(randomIndex, 1);
+            }
+        }
+
+        // Perform post-contest updates asynchronously
+        setTimeout(() => {
+            postContestUpdates(contestId, validContestUsers);
+        }, 1000);
+
+        res.status(200).json({ message: "Contest processed successfully", contestId });
+    } catch (error) {
+        console.error("Error processing contest:", error);
+        res.status(500).json({ message: "Internal Server Error" });
+    }
+};
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+export const checkContestPrevious = async (date, time) => {
+    console.log("Checking contests for date and time:", date, time);
+
+    try {
+        // Find contests that match criteria
+        const openContests = await Contest.find({
+            _id: "67988f7c04c549a72fa25375",
+            status: "APPROVED",
+        }).exec();
+
+        if (!openContests.length) {
+            console.log("No contests found for the given time and date.");
+            return;
+        }
+
+        console.log("List of contests:", openContests);
+
+        for (const contest of openContests) {
+            const updatedContest = await Contest.findOneAndUpdate({ _id: contest._id, status: "APPROVED" }, { $set: { status: "PROCESSING" } }, { new: true }).exec();
+
+            if (!updatedContest) {
+                console.log(`Contest ${contest._id} is already being processed by another instance.`);
+                continue;
+            }
+
+            const [contestPrizes, contestUsers] = await Promise.all([Prize.find({ contestId: contest._id }).sort({ rank: 1 }).lean().exec(), userContest.find({ contestId: contest._id, status: "join" }).lean().exec()]);
+
+            const allocatedPrizeIds = new Set();
+
+            if (contestPrizes.length > 0 && contestUsers.length > 0) {
+                for (const prize of contestPrizes) {
+                    if (allocatedPrizeIds.has(prize._id)) continue;
+                    let randomUser = null;
+
+                    while (!randomUser && contestUsers.length > 0) {
+                        const randomIndex = Math.floor(Math.random() * contestUsers.length);
+                        randomUser = contestUsers[randomIndex];
+                        const user = await userModel.findById(randomUser.userId);
+
+                        if (user && user.isBlocked) {
+                            await userContest.findByIdAndUpdate(randomUser._id, { status: "lose" }).exec();
+                            contestUsers.splice(randomIndex, 1);
+                            randomUser = null;
+                        }
+                    }
+
+                    if (randomUser) {
+                        await userContest
+                            .findByIdAndUpdate(randomUser._id, {
+                                status: "win",
+                                rank: prize.rank,
+                            })
+                            .exec();
+
+                        contestUsers.splice(contestUsers.indexOf(randomUser), 1);
+                        allocatedPrizeIds.add(prize._id);
+                    }
+                }
+            }
+
+            if (contestUsers.length > 0) {
+                await userContest.updateMany({ contestId: contest._id, status: "join" }, { status: "lose" }).exec();
+            }
+
+            await Contest.findByIdAndUpdate(updatedContest._id, { status: "CLOSED" }).exec();
+        }
+
+        const userData = await userModel
+            .find({ role: { $ne: "ADMIN" }, name: { $ne: "Contractor" } })
+            .lean()
+            .exec();
+        // Step 1: Prepare the notification message
+        const title = "🎉 लकी ड्रा के नतीजे अब घोषित होने वाले हैं!";
+        const body = "🏆 अब जानिए कौन जीता! 🎉";
+
+        for (const user of userData) {
+            try {
+                await sendNotificationMessage(user._id, title, body, "contestResult");
+
+                console.log(`Notification sent to ${user._id}: ${title}: ${body}`);
+            } catch (error) {
+                console.error(`Failed to send notification to ${user.name} (${user.phone}): ${error.message}`);
+            }
+        }
+
+        console.log("Contest check completed successfully:", startDate.getTime(), time);
+    } catch (error) {
+        console.error("Error in checkContest:", error);
+    }
+};

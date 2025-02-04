@@ -5,7 +5,6 @@ import mongoose from "mongoose";
 import logger from "morgan";
 import path from "path";
 
-
 import { CONFIG } from "./helpers/Config";
 import { errorHandler } from "./helpers/ErrorHandler";
 import attribute from "./routes/attribute.routes";
@@ -31,6 +30,7 @@ import newContractorRouter from "./routes/newContractor.routes";
 import activityLogsRouter from "./routes/activityLogs.routes";
 import promotionRoutes from "./routes/promotion.routes";
 import ticketRoutes from "./routes/ticket.routes";
+import noteRoutes from "./routes/notes.routes";
 import { format } from "date-fns";
 const schedule = require("node-schedule");
 const { exec } = require("child_process");
@@ -93,6 +93,7 @@ app.use("/newContractor", newContractorRouter);
 // app.use("/whatsapp", whatsappRoutes);
 app.use("/promotions", promotionRoutes);
 app.use("/ticket", ticketRoutes);
+app.use("/notes", noteRoutes);
 app.use("/", fileRouter);
 
 app.get("/backup", async (req, res) => {
@@ -118,7 +119,7 @@ const job = schedule.scheduleJob("*/30 * * * * *", function () {
     let date = format(new Date(), "yyyy-MM-dd");
     let time = format(new Date(), "HH:mm");
     console.log("RUNNING", date, time);
-    checkContest(date, time); 
+    checkContest(date, time);
 });
 
 const activityLogsDeleteJob = schedule.scheduleJob("0 0 * * 0#2", async () => {

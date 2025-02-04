@@ -57,16 +57,19 @@ let User = mongoose.Schema(
             type: Boolean,
             default: false,
         },
-        note: {
-            type: String,
-        },
+
+        note: [
+            {
+                reason: { type: String, required: true },
+                timestamp: { type: Date, default: Date.now },
+            },
+        ],
 
         referrals: [{ type: mongoose.Schema.Types.ObjectId, ref: "User" }],
         referredBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
         referralRewards: [{ type: mongoose.Schema.Types.ObjectId, ref: "ReferralRewards" }],
         referralPointsAwarded: { type: Boolean, default: false },
         rewardedReferrals: [{ type: mongoose.Schema.Types.ObjectId, ref: "Users" }],
-
     },
     { timestamps: true }
 );

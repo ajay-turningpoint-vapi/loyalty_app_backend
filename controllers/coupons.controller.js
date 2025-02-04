@@ -233,7 +233,13 @@ export const getActiveCoupons = async (req, res, next) => {
             query.productName = req.query.productName; // Add productName to query if provided
         }
 
+        if (req.query.name) {
+            query.name = { $regex: new RegExp(req.query.name, "i") };
+        }
+
         let CouponArr = await Coupon.find(query).lean().exec();
+        console.log(CouponArr, "CouponArr");
+        
 
         res.status(200).json({ message: "active coupons", data: CouponArr, success: true });
     } catch (error) {
@@ -291,6 +297,28 @@ export const getUsedCouponsforMap = async (req, res, next) => {
         let CouponArr = await Coupon.find(query).lean().exec();
 
         res.status(200).json({ message: "List of scanned coupons", data: CouponArr, success: true });
+    } catch (error) {
+        console.error(error);
+        next(error);
+    }
+};
+
+export const getScannedCouponsByEmail = async (req, res, next) => {
+    try {
+        const { scannedEmail } = req.query; // Get the scannedEmail from query parameters
+
+        // Validate that scannedEmail is provided
+        if (!scannedEmail) {
+            return res.status(400).json({ message: "User Email is required", success: false });
+        }
+
+        // Build the query to filter scanned coupons by email
+        const query = { scannedEmail: { $regex: scannedEmail, $options: "i" } }; // Case-insensitive search
+
+        // Fetch the coupons based on the scannedEmail
+        let scannedCoupons = await Coupon.find(query).lean().exec();
+
+        res.status(200).json({ message: "List of scanned coupons", data: scannedCoupons, success: true });
     } catch (error) {
         console.error(error);
         next(error);
@@ -645,8 +673,7 @@ export const applyCoupon = async (req, res, next) => {
         const { id, latitude, longitude } = req.body;
         const { userId, name, email } = req.user;
 
-     console.log(req.body, "req.body");
-     
+        console.log(req.body, "req.body");
 
         // Find coupon by ID or name
         const findArr = mongoose.isValidObjectId(id) ? [{ _id: id }, { name: id }] : [{ name: id }];
@@ -695,7 +722,6 @@ export const applyCoupon = async (req, res, next) => {
         next(err); // Continue to error handler if necessary
     }
 };
-
 
 // Extracted function to handle points and logs
 const processPoints = async (UserObj, updatedCoupon, points, name, CouponObj) => {
@@ -757,31 +783,28 @@ const sendContractorNotification = async (contractorId, contractorPoints, coupon
     }
 };
 
-
 export const couponMultipleDelete = async (req, res, next) => {
     // const { productName} = req.query;
 
     try {
-      // Validate inputs
-    //   if (!productName) {
-    //     return res.status(400).json({ message: "Invalid query parameters." });
-    //   }  
-      // Delete coupons matching the criteria
-      const result = await Coupon.deleteMany(
-        {productName:"FURNIPART ADHESIVE 50 KG -DM",maximumNoOfUsersAllowed:1}
-    //     {
-    //     productName:"FIXU ADHESIVE 50 KG -DM",
-    //     maximumNoOfUsersAllowed: 1,
-    //   }
-    );
-      
-  
-      return res.status(200).json({
-        message: `${result.deletedCount} coupons deleted successfully.`,
-      });
-    } catch (error) {
-      console.error("Error deleting coupons:", error);
-      return res.status(500).json({ message: "An error occurred." });
-    }
+        // Validate inputs
+        //   if (!productName) {
+        //     return res.status(400).json({ message: "Invalid query parameters." });
+        //   }
+        // Delete coupons matching the criteria
+        const result = await Coupon.deleteMany(
+            { productName: "FURNIPART ADHESIVE 50 KG -DM", maximumNoOfUsersAllowed: 1 }
+            //     {
+            //     productName:"FIXU ADHESIVE 50 KG -DM",
+            //     maximumNoOfUsersAllowed: 1,
+            //   }
+        );
 
+        return res.status(200).json({
+            message: `${result.deletedCount} coupons deleted successfully.`,
+        });
+    } catch (error) {
+        console.error("Error deleting coupons:", error);
+        return res.status(500).json({ message: "An error occurred." });
+    }
 };

@@ -48,6 +48,9 @@ import {
     updateUserProfileNote,
     updateUserProfileAdmin,
     getContractorUsingPhone,
+    bulkApproveAllUserKycStatus,
+    bulkActivateAllUsers,
+    getCounts,
 } from "../controllers/users.controller";
 import { authorizeJwt } from "../middlewares/auth.middleware";
 import { sendSingleNotificationMiddleware } from "../middlewares/fcm.middleware";
@@ -67,8 +70,11 @@ router.post("/generateOtp", phoneOtpgenerate);
 router.post("/verifyOtp", verifyOtp);
 router.post("/checkRefCode", checkRefCode);
 router.patch("/updateUserStatus/:id", updateUserStatus);
-router.put("/updateStatus", testupdate);
+// router.put("/updateStatus", testupdate);
 router.patch("/updateUserKycStatus/:id", updateUserKycStatus);
+
+router.patch("/updateUserBulk", authorizeJwt, bulkActivateAllUsers);
+
 router.patch("/updateUserOnlineStatus", authorizeJwt, updateUserOnlineStatus);
 router.patch("/update-profile", authorizeJwt, updateUserProfile);
 router.patch("/update-profile-admin", authorizeJwt, updateUserProfileAdmin);
@@ -89,6 +95,7 @@ router.get("/getUserContests", getUserContests);
 router.get("/getUserContestsReport", getUserContestsReport);
 router.get("/getUserContestsReportLose", getUserContestsReportLose);
 router.get("/getUserContestsCount/:id", getUserContestsJoinCount);
+router.get("/getCounts", getCounts);
 router.delete("/deleteById/:id", deleteUser);
 router.get("/not-listed-contractors", notListedContractors);
 router.patch("/monitor-location", authorizeJwt, location);

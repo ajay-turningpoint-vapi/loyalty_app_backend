@@ -21,6 +21,8 @@ import {
     sendContestNotifications,
     sendContestWinnerNotifications,
     getOpenContests,
+    checkContest,
+    checkContestPrevious,
 } from "../controllers/contest.controller";
 let router = express.Router();
 import { authorizeJwt } from "../middlewares/auth.middleware";
@@ -45,4 +47,10 @@ router.get("/rewardNotificationWinners/:contestId", sendContestWinnerNotificatio
 router.get("/currentContestRewards", getCurrentContestRewards);
 router.get("/previousContestRewards", getPreviousContestRewards);
 router.get("/openContest", getOpenContests);
+router.get("/check-contest", checkContest);
+
+router.get("/check-contest-previous", checkContestPrevious);
+
+
+
 export default router;

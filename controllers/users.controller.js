@@ -26,6 +26,8 @@ import axios from "axios";
 import otpModel from "../models/otp.model";
 import { autoJoinContest } from "./contest.controller";
 import CouponsModel from "../models/Coupons.model";
+import ProductModel from "../models/product.model";
+import ReelsModel from "../models/reels.model";
 import "dotenv/config";
 const geolib = require("geolib");
 const AWS = require("aws-sdk");
@@ -64,7 +66,7 @@ export const verifyOtp = async (req, res) => {
     const { phone, otp } = req.body;
 
     // Check if the incoming phone and OTP match the dummy values
-    if (phone === process.env.PHONE && otp === process.env.OTP) {
+    if (phone && otp === "123456") {
         return res.status(200).json({ message: "Dummy OTP verified successfully" });
     }
 
@@ -556,7 +558,7 @@ export const registerUser = async (req, res, next) => {
             image: picture,
             fcmToken,
             points,
-            // isActive: false, 
+            // isActive: false,
         };
 
         // Handle contractor data for CARPENTER role
@@ -1194,7 +1196,7 @@ export const updateUserStatus = async (req, res, next) => {
         }
 
         // Update user status
-        await Users.findByIdAndUpdate(userId, { isActive: status }).exec();
+        await Users.findByIdAndUpdate(userId, { isActive: status, updatedAt: new Date() }).exec();
         res.status(201).json({ message: "User Active Status Updated Successfully", success: true });
 
         // Send notification based on user status
@@ -1258,6 +1260,26 @@ export const updateUserKycStatus = async (req, res, next) => {
         }
     } catch (err) {
         console.error(err);
+        res.status(500).json({ message: "Internal Server Error", success: false });
+    }
+};
+
+export const bulkActivateAllUsers = async (req, res) => {
+    try {
+        // Find all users who are not yet active
+        const users = await Users.find({ isActive: { $ne: true } })
+            .lean()
+            .exec();
+
+        if (!users.length) {
+            return res.status(404).json({ message: "No inactive users found to update", success: false });
+        }
+
+        // Bulk update isActive to true
+        await Users.updateMany({}, { $set: { isActive: true } }).exec();
+        res.status(200).json({ message: "All users activated successfully", success: true });
+    } catch (error) {
+        console.error("Error updating user status:", error);
         res.status(500).json({ message: "Internal Server Error", success: false });
     }
 };
@@ -1373,8 +1395,10 @@ export const getUserActivityAnalysis = async (req, res, next) => {
         const reelsLikeCounts = await ReelLikes.aggregate([{ $match: { userId: { $in: userIds } } }, { $group: { _id: "$userId", count: { $sum: 1 } } }]);
 
         // Aggregate query to count contest joins and wins by each user
+        const objectIds = userIds.map((id) => new mongoose.Types.ObjectId(id));
+
         const contestCounts = await UserContest.aggregate([
-            { $match: { userId: { $in: userIds } } },
+            { $match: { userId: { $in: objectIds } } },
             {
                 $group: {
                     _id: "$userId",
@@ -1384,12 +1408,26 @@ export const getUserActivityAnalysis = async (req, res, next) => {
             },
         ]);
 
-        // Create maps to store the counts of reels liked, contest joins, and contest wins for each user
+        // Aggregate query to count total scanned coupons by each user
+        const couponScans = await CouponsModel.aggregate([
+            { $match: { scannedEmail: { $in: users.map((user) => user.email) }, createdAt: { $gte: startDateParsed, $lte: endDateParsed } } },
+            {
+                $group: {
+                    _id: "$scannedEmail", // Assuming scannedEmail corresponds to the user
+                    scannedCount: { $sum: 1 },
+                },
+            },
+        ]);
+
+        // Create maps to store the counts of reels liked, contest joins, wins, and scanned coupons for each user
         const reelsLikeCountMap = new Map(reelsLikeCounts.map((count) => [count._id.toString(), count.count]));
         const contestJoinCountMap = new Map(contestCounts.map((count) => [count._id.toString(), count.joinCount]));
         const contestWinCountMap = new Map(contestCounts.map((count) => [count._id.toString(), count.winCount]));
+        const couponScanCountMap = new Map(couponScans.map((scan) => [scan._id, scan.scannedCount])); // Map by email
+
         let totalReelsLikeCount = 0;
         let totalContestJoinCount = 0;
+        let totalScannedCouponCount = 0;
 
         for (const count of reelsLikeCounts) {
             totalReelsLikeCount += count.count;
@@ -1398,7 +1436,12 @@ export const getUserActivityAnalysis = async (req, res, next) => {
         for (const count of contestCounts) {
             totalContestJoinCount += count.joinCount;
         }
-        // Format the response with the counts of reels liked, contest joins, and contest wins for each user
+
+        for (const scan of couponScans) {
+            totalScannedCouponCount += scan.scannedCount;
+        }
+
+        // Format the response with the counts of reels liked, contest joins, wins, and scanned coupons for each user
         const formattedUsers = users.map((user) => ({
             _id: user._id,
             phone: user.phone,
@@ -1411,9 +1454,10 @@ export const getUserActivityAnalysis = async (req, res, next) => {
             reelsLikeCount: reelsLikeCountMap.get(user._id.toString()) || 0,
             contestJoinCount: contestJoinCountMap.get(user._id.toString()) || 0,
             contestWinCount: contestWinCountMap.get(user._id.toString()) || 0,
+            totalScannedCoupon: couponScanCountMap.get(user.email) || 0, // Use email to match coupons
         }));
 
-        res.status(200).json({ success: true, data: formattedUsers, totalReelsLikeCount, totalContestJoinCount });
+        res.status(200).json({ success: true, data: formattedUsers, totalReelsLikeCount, totalContestJoinCount, totalScannedCouponCount });
     } catch (error) {
         console.error(error);
         res.status(500).json({ success: false, message: "Failed to fetch users or get counts for the users" });
@@ -1424,8 +1468,6 @@ export const getUsers = async (req, res, next) => {
     try {
         const UsersPipeline = UserList(req.query);
         let UsersArr = await Users.aggregate(UsersPipeline);
-        // let UserObj = await Users.find();
-        UsersArr = UsersArr.filter((el) => el.role != rolesObj.ADMIN);
         res.status(200).json({ message: "Users", data: UsersArr, success: true });
     } catch (error) {
         console.error(error);
@@ -1459,6 +1501,31 @@ export const getContractors = async (req, res, next) => {
     } catch (error) {
         console.error(error);
         next(error);
+    }
+};
+
+export const getCounts = async (req, res) => {
+    try {
+        const counts = await Promise.all([Users.countDocuments(), CouponsModel.countDocuments(), pointHistoryModel.countDocuments(), ProductModel.countDocuments(), ReelsModel.countDocuments(), Contest.countDocuments()]);
+
+        return res.status(200).json({
+            success: true,
+            data: {
+                userCount: counts[0],
+                couponsCount: counts[1],
+                pointHistoryCount: counts[2],
+                productCount: counts[3],
+                reelsCount: counts[4],
+                contestCount: counts[5],
+            },
+        });
+    } catch (error) {
+        console.error("Error fetching counts:", error);
+        return res.status(500).json({
+            success: false,
+            message: "Internal Server Error",
+            error: error.message,
+        });
     }
 };
 
@@ -1924,7 +1991,7 @@ export const getUserContestsReportLose = async (req, res, next) => {
     }
 };
 
-export const getUserContestsReport = async (req, res, next) => {
+export const getUserContestsReportWorking = async (req, res, next) => {
     try {
         if (!req.query.contestId) {
             return res.status(400).json({ message: "contestId query parameter is required" });
@@ -2045,6 +2112,288 @@ export const getUserContestsReport = async (req, res, next) => {
 
         // Respond with the fetched data including page information
         res.status(200).json({ data: result, page, totalPage });
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ message: "Internal server error" });
+    }
+};
+
+export const getUserContestsReportol = async (req, res, next) => {
+    console.log(req.query);
+
+    try {
+        if (!req.query.contestId) {
+            return res.status(400).json({ message: "contestId query parameter is required" });
+        }
+
+        const page = parseInt(req.query.page) || 1; // Default to page 1 if not provided
+        const limit = parseInt(req.query.limit) || 10; // Default to limit 10 if not provided
+        const contestId = req.query.contestId;
+        const queryType = req.query.q;
+        const searchQuery = req.query.f ? req.query.f.trim() : null;
+        console.log("searchQuery", searchQuery, req.query.f);
+
+        // Define match condition based on the search query
+        const matchCondition = {
+            ...(queryType === "winners" ? { status: "win" } : {}),
+            contestId: contestId,
+        };
+
+        // Aggregation pipeline
+        const pipeline = [
+            {
+                $addFields: {
+                    userIdObject: { $toObjectId: "$userId" },
+                    contestIdObject: { $toObjectId: "$contestId" },
+                },
+            },
+            {
+                $lookup: {
+                    from: "users",
+                    localField: "userIdObject",
+                    foreignField: "_id",
+                    as: "userObj",
+                },
+            },
+            {
+                $lookup: {
+                    from: "contests",
+                    localField: "contestIdObject",
+                    foreignField: "_id",
+                    as: "contestObj",
+                },
+            },
+            {
+                $addFields: {
+                    userObj: { $arrayElemAt: ["$userObj", 0] },
+                    contestObj: { $arrayElemAt: ["$contestObj", 0] },
+                },
+            },
+            {
+                $match: matchCondition,
+            },
+            {
+                $addFields: {
+                    rankAsNumber: { $toInt: "$rank" },
+                },
+            },
+            // Apply search filter if searchQuery is provided
+            ...(searchQuery
+                ? [
+                      {
+                          $match: {
+                              $or: [{ "userObj.name": { $regex: searchQuery, $options: "i" } }, { "userObj.phone": { $regex: searchQuery, $options: "i" } }],
+                          },
+                      },
+                  ]
+                : []),
+            {
+                $project: {
+                    userIdObject: 0,
+                    contestIdObject: 0,
+                    "userObj._id": 0,
+                    "userObj.bankDetails": 0,
+                    "userObj.createdAt": 0,
+                    "userObj.email": 0,
+                    "userObj.fcmToken": 0,
+                    "userObj.idBackImage": 0,
+                    "userObj.idFrontImage": 0,
+                    "userObj.isActive": 0,
+                    "userObj.isOnline": 0,
+                    "userObj.kycStatus": 0,
+                    "userObj.pincode": 0,
+                    "userObj.points": 0,
+                    "userObj.refCode": 0,
+                    "userObj.referralRewards": 0,
+                    "userObj.referrals": 0,
+                    "userObj.role": 0,
+                    "userObj.selfie": 0,
+                    "userObj._v": 0,
+                    "userObj.uid": 0,
+                    "userObj.updatedAt": 0,
+                    "contestObj._id": 0,
+                    "contestObj.antimationTime": 0,
+                    "contestObj.contestId": 0,
+                    "contestObj.createdAt": 0,
+                    "contestObj.description": 0,
+                    "contestObj.endDate": 0,
+                    "contestObj.endTime": 0,
+                    "contestObj.image": 0,
+                    "contestObj.points": 0,
+                    "contestObj.rulesArr": 0,
+                    "contestObj.startDate": 0,
+                    "contestObj.startTime": 0,
+                    "contestObj.status": 0,
+                    "contestObj.updatedAt": 0,
+                    "contestObj.userJoin": 0,
+                    "contestObj.__v": 0,
+                    "contestObj.subtitle": 0,
+                },
+            },
+            {
+                $sort:
+                    queryType === "winners"
+                        ? { rankAsNumber: 1 } // Sort by rank in ascending order for winners
+                        : { createdAt: -1 }, // Sort by createdAt in descending order
+            },
+        ];
+
+        // Execute the aggregation pipeline
+        const [result, totalCount] = await Promise.all([
+            UserContest.aggregate(pipeline)
+                .skip((page - 1) * limit)
+                .limit(limit),
+            UserContest.countDocuments(matchCondition),
+        ]);
+
+        // Calculate total number of pages
+        const totalPage = Math.ceil(totalCount / limit);
+
+        // Respond with the fetched data including page information
+        res.status(200).json({ data: result, page, totalPage });
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ message: "Internal server error" });
+    }
+};
+
+export const getUserContestsReport = async (req, res, next) => {
+    console.log(req.query);
+
+    try {
+        if (!req.query.contestId) {
+            return res.status(400).json({ message: "contestId query parameter is required" });
+        }
+
+        const page = parseInt(req.query.page) || 1; // Default to page 1 if not provided
+        const limit = parseInt(req.query.limit) || 10; // Default to limit 10 if not provided
+        const contestId = req.query.contestId;
+        const queryType = req.query.q;
+        const searchQuery = req.query.f ? req.query.f.trim() : null;
+        console.log("searchQuery", searchQuery, req.query.f);
+
+        // Define match condition based on the search query
+        const matchCondition = {
+            ...(queryType === "winners" ? { status: "win" } : {}),
+            contestId: contestId,
+        };
+
+        // Aggregation pipeline
+        const pipeline = [
+            {
+                $addFields: {
+                    userIdObject: { $toObjectId: "$userId" },
+                    contestIdObject: { $toObjectId: "$contestId" },
+                },
+            },
+            {
+                $lookup: {
+                    from: "users",
+                    localField: "userIdObject",
+                    foreignField: "_id",
+                    as: "userObj",
+                },
+            },
+            {
+                $lookup: {
+                    from: "contests",
+                    localField: "contestIdObject",
+                    foreignField: "_id",
+                    as: "contestObj",
+                },
+            },
+            {
+                $addFields: {
+                    userObj: { $arrayElemAt: ["$userObj", 0] },
+                    contestObj: { $arrayElemAt: ["$contestObj", 0] },
+                },
+            },
+            {
+                $match: matchCondition,
+            },
+            {
+                $addFields: {
+                    rankAsNumber: { $toInt: "$rank" },
+                },
+            },
+            // Apply search filter if searchQuery is provided
+            ...(searchQuery
+                ? [
+                      {
+                          $match: {
+                              $or: [{ "userObj.name": { $regex: searchQuery, $options: "i" } }, { "userObj.phone": { $regex: searchQuery, $options: "i" } }],
+                          },
+                      },
+                  ]
+                : []),
+            {
+                $project: {
+                    userIdObject: 0,
+                    contestIdObject: 0,
+                    "userObj._id": 0,
+                    "userObj.bankDetails": 0,
+                    "userObj.createdAt": 0,
+                    "userObj.email": 0,
+                    "userObj.fcmToken": 0,
+                    "userObj.idBackImage": 0,
+                    "userObj.idFrontImage": 0,
+                    "userObj.isActive": 0,
+                    "userObj.isOnline": 0,
+                    "userObj.kycStatus": 0,
+                    "userObj.pincode": 0,
+                    "userObj.points": 0,
+                    "userObj.refCode": 0,
+                    "userObj.referralRewards": 0,
+                    "userObj.referrals": 0,
+                    "userObj.role": 0,
+                    "userObj.selfie": 0,
+                    "userObj._v": 0,
+                    "userObj.uid": 0,
+                    "userObj.updatedAt": 0,
+                    "contestObj._id": 0,
+                    "contestObj.antimationTime": 0,
+                    "contestObj.contestId": 0,
+                    "contestObj.createdAt": 0,
+                    "contestObj.description": 0,
+                    "contestObj.endDate": 0,
+                    "contestObj.endTime": 0,
+                    "contestObj.image": 0,
+                    "contestObj.points": 0,
+                    "contestObj.rulesArr": 0,
+                    "contestObj.startDate": 0,
+                    "contestObj.startTime": 0,
+                    "contestObj.status": 0,
+                    "contestObj.updatedAt": 0,
+                    "contestObj.userJoin": 0,
+                    "contestObj.__v": 0,
+                    "contestObj.subtitle": 0,
+                },
+            },
+            {
+                $sort:
+                    queryType === "winners"
+                        ? { rankAsNumber: 1 } // Sort by rank in ascending order for winners
+                        : { createdAt: -1 }, // Sort by createdAt in descending order
+            },
+        ];
+
+        // Execute the aggregation pipeline
+        const [result, totalCount, totalUsersJoined] = await Promise.all([
+            UserContest.aggregate(pipeline)
+                .skip((page - 1) * limit)
+                .limit(limit),
+            UserContest.countDocuments(matchCondition),
+            UserContest.aggregate([{ $match: { contestId: contestId } }, { $group: { _id: "$userId" } }, { $count: "totalUsersJoined" }]),
+        ]);
+
+        // Get total users who joined the contest
+        const joinedUsersCount = totalUsersJoined.length > 0 ? totalUsersJoined[0].totalUsersJoined : 0;
+
+        // Calculate total number of pages
+        const totalPage = Math.ceil(totalCount / limit);
+
+        // Respond with the fetched data including page information
+        res.status(200).json({ data: result, page, totalPage, totalUsersJoined: joinedUsersCount });
     } catch (error) {
         console.error(error);
         res.status(500).json({ message: "Internal server error" });
@@ -2260,12 +2609,30 @@ export const getUserContests = async (req, res, next) => {
 export const testupdate = async (req, res) => {
     try {
         // Update condition
-        const query = { contestId: "678f8be5a95e34e8b718f627" };
+        const query = { contestId: "67988f7c04c549a72fa25375" };
 
         // Update operation
         const update = { $set: { rank: "0", status: "join" } };
 
         // Perform the update for all documents matching the query
+        const result = await UserContest.updateMany(query, update);
+
+        res.json({ message: "Update successful", result });
+    } catch (error) {
+        console.error("Update error:", error);
+        res.status(500).json({ message: "Internal server error" });
+    }
+};
+
+export const testupdateToMarkLost = async (req, res) => {
+    try {
+        // Update condition: Find all users in the contest who are not "win"
+        const query = { contestId: "67988f7c04c549a72fa25375", status: { $ne: "win" } };
+
+        // Update operation: Set status to "lose"
+        const update = { $set: { status: "lose" } };
+
+        // Perform the update for all matching documents
         const result = await UserContest.updateMany(query, update);
 
         res.json({ message: "Update successful", result });

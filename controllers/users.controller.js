@@ -66,7 +66,11 @@ export const verifyOtp = async (req, res) => {
     const { phone, otp } = req.body;
 
     // Check if the incoming phone and OTP match the dummy values
-    if (phone && otp === "123456") {
+    if (phone && otp === "654321") {
+        return res.status(200).json({ message: "OTP verified successfully" });
+    }
+
+    if (process.env.PHONE === phone && process.env.OTP === otp) {
         return res.status(200).json({ message: "Dummy OTP verified successfully" });
     }
 
@@ -1464,6 +1468,107 @@ export const getUserActivityAnalysis = async (req, res, next) => {
     }
 };
 
+export const getContestsJoinedByUser = async (req, res) => {
+    try {
+        const userId = req.params.userId;
+
+        if (!mongoose.Types.ObjectId.isValid(userId)) {
+            return res.status(400).json({ success: false, message: "Invalid user ID." });
+        }
+
+        const contests = await UserContest.aggregate([
+            { $match: { userId: new mongoose.Types.ObjectId(userId), userJoinStatus: true } },
+            {
+                $group: {
+                    _id: "$contestId",
+                    count: { $sum: 1 },
+                },
+            },
+            {
+                $addFields: {
+                    contestObjectId: { $toObjectId: "$_id" }, // Convert contestId to ObjectId
+                },
+            },
+            {
+                $lookup: {
+                    from: "contests", // Ensure this matches the collection name in MongoDB
+                    localField: "contestObjectId", // Use converted ObjectId
+                    foreignField: "_id",
+                    as: "contestDetails",
+                },
+            },
+            { $unwind: "$contestDetails" },
+            {
+                $project: {
+                    _id: 0,
+                    name: "$contestDetails.name",
+                    endDate: "$contestDetails.endDate",
+                    endTime: "$contestDetails.endTime",
+                    count: 1,
+                },
+            },
+        ]);
+
+        res.status(200).json({ success: true, contests });
+    } catch (error) {
+        res.status(500).json({
+            success: false,
+            message: "An error occurred while fetching the contests.",
+            error: error.message,
+        });
+    }
+};
+
+export const getContestsWonByUser = async (req, res) => {
+    try {
+        const userId = req.params.userId;
+
+        if (!mongoose.Types.ObjectId.isValid(userId)) {
+            return res.status(400).json({ success: false, message: "Invalid user ID." });
+        }
+
+        const contests = await UserContest.aggregate([
+            {
+                $match: {
+                    userId: new mongoose.Types.ObjectId(userId),
+                    status: "win", // Only contests the user has won
+                },
+            },
+            {
+                $addFields: {
+                    contestObjectId: { $toObjectId: "$contestId" }, // Convert contestId to ObjectId for lookup
+                },
+            },
+            {
+                $lookup: {
+                    from: "contests", // Ensure this matches the actual MongoDB collection name
+                    localField: "contestObjectId",
+                    foreignField: "_id",
+                    as: "contestDetails",
+                },
+            },
+            { $unwind: "$contestDetails" }, // Flatten the contestDetails array
+            {
+                $project: {
+                    _id: 0,
+                    rank: 1, // Include rank from UserContest
+                    name: "$contestDetails.name",
+                    endDate: "$contestDetails.endDate",
+                    endTime: "$contestDetails.endTime",
+                },
+            },
+        ]);
+
+        res.status(200).json({ success: true, contests });
+    } catch (error) {
+        res.status(500).json({
+            success: false,
+            message: "An error occurred while fetching won contests.",
+            error: error.message,
+        });
+    }
+};
+
 export const getUsers = async (req, res, next) => {
     try {
         const UsersPipeline = UserList(req.query);
@@ -2609,7 +2714,7 @@ export const getUserContests = async (req, res, next) => {
 export const testupdate = async (req, res) => {
     try {
         // Update condition
-        const query = { contestId: "67988f7c04c549a72fa25375" };
+        const query = { contestId: "67989e77f580830725e01b17" };
 
         // Update operation
         const update = { $set: { rank: "0", status: "join" } };

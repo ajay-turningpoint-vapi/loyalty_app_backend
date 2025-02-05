@@ -48,7 +48,7 @@ export const getReelsold = async (req, res, next) => {
     }
 };
 
-export const getReels = async (req, res, next) => {
+export const getReelslatest = async (req, res, next) => {
     try {
         let { page = 1, limit = 10 } = req.query;
         page = parseInt(page, 10);
@@ -85,6 +85,62 @@ export const getReels = async (req, res, next) => {
         res.status(200).json({
             message: "Reels Found",
             data: reelsWithLikes,
+            totalPages: Math.ceil(totalReels / limit),
+            currentPage: page,
+            success: true,
+        });
+    } catch (err) {
+        next(err);
+    }
+};
+
+export const getReels = async (req, res, next) => {
+    try {
+        let { page = 1, limit = 10 } = req.query;
+        page = parseInt(page, 10);
+        limit = parseInt(limit, 10);
+
+        // Count total reels
+        const totalReels = await Reels.countDocuments();
+
+        // Fetch reels with pagination and totalLikes using aggregation
+        const reelsArr = await Reels.aggregate([
+            { $sort: { createdAt: -1 } }, // Sort by createdAt (latest first)
+            { $skip: (page - 1) * limit }, // Pagination: Skip previous pages
+            { $limit: limit }, // Limit the number of results
+            {
+                $lookup: {
+                    from: "reellikes", // Join with ReelLikes collection
+                    localField: "_id",
+                    foreignField: "reelId",
+                    as: "likes",
+                },
+            },
+            {
+                $addFields: {
+                    totalLikes: { $size: "$likes" }, // Count likes
+                },
+            },
+            {
+                $project: {
+                    likes: 0, // Exclude the likes array for smaller response size
+                },
+            },
+        ]);
+
+        if (!reelsArr.length) {
+            return res.status(200).json({
+                message: "No reels created yet",
+                data: [],
+                totalPages: 0,
+                currentPage: page,
+                success: true,
+            });
+        }
+
+        res.status(200).json({
+            message: "Reels Found",
+            data: reelsArr,
             totalPages: Math.ceil(totalReels / limit),
             currentPage: page,
             success: true,
@@ -180,7 +236,122 @@ export const getReelsPaginated = async (req, res, next) => {
     }
 };
 
-export const getReelsPaginatedTesting = async (req, res, next) => {
+export const getReelsPaginatedworking = async (req, res, next) => {
+    try {
+        if (!req.user) {
+            return res.status(401).json({ message: "Unauthorized" });
+        }
+
+        const limit = parseInt(req.query.limit, 10) || 10;
+        const page = parseInt(req.query.page, 10) || 1;
+
+        if (page <= 0) {
+            return res.status(400).json({ message: "Invalid page parameter", success: false });
+        }
+
+        const skip = (page - 1) * limit;
+
+        // Get total count of reels (cached if needed)
+        const totalCount = await Reels.countDocuments();
+
+        if (totalCount === 0) {
+            return res.status(404).json({ message: "No reels found", success: false });
+        }
+
+        // Fetch reels with liked status using a **single query**
+        const reelsArr = await Reels.aggregate([
+            { $skip: skip },
+            { $limit: limit },
+            {
+                $lookup: {
+                    from: "reellikes",
+                    let: { reelId: "$_id" },
+                    pipeline: [
+                        { $match: { $expr: { $eq: ["$reelId", "$$reelId"] }, userId: req.user.userId } },
+                        { $limit: 1 }, // Only check if the user liked it
+                    ],
+                    as: "userLike",
+                },
+            },
+            {
+                $addFields: {
+                    likedByCurrentUser: { $gt: [{ $size: "$userLike" }, 0] }, // Convert array to boolean
+                },
+            },
+            { $project: { userLike: 0 } }, // Exclude unnecessary fields
+        ]);
+
+        // Log user activity asynchronously to prevent blocking response
+        ActivityLog.create({
+            userId: req.user.userId,
+            type: "Watching Reels",
+        }).catch((err) => console.error("Activity log error:", err));
+
+        res.status(200).json({
+            message: "Reels Found",
+            data: reelsArr,
+            totalPages: Math.ceil(totalCount / limit),
+            currentPage: page,
+            success: true,
+        });
+    } catch (err) {
+        next(err);
+    }
+};
+
+export const getReelsPaginatedtest = async (req, res, next) => {
+    try {
+        if (!req.user) {
+            return res.status(401).json({ message: "Unauthorized" });
+        }
+
+        const limit = parseInt(req.query.limit, 10) || 10;
+        const page = parseInt(req.query.page, 10) || 1;
+
+        if (page <= 0) {
+            return res.status(400).json({ message: "Invalid page parameter", success: false });
+        }
+
+        const skip = (page - 1) * limit;
+
+        // Get total count of reels (cached if needed)
+        const totalCount = await Reels.countDocuments();
+
+        if (totalCount === 0) {
+            return res.status(404).json({ message: "No reels found", success: false });
+        }
+
+        // Fetch reels with liked status using a **single query**
+        const reelsArr = await Reels.find().skip(skip).limit(limit);
+
+        // Add likedByCurrentUser field directly from the Map
+        const updatedReelsArr = reelsArr.map((reel) => {
+            const likedByCurrentUser = reel.likedBy?.get(req.user.userId) || false;
+            return {
+                ...reel.toObject(),
+                likedByCurrentUser, // Add likedByCurrentUser field
+            };
+        });
+
+        // Log user activity asynchronously to prevent blocking response
+        ActivityLog.create({
+            userId: req.user.userId,
+            type: "Watching Reels",
+        }).catch((err) => console.error("Activity log error:", err));
+
+        res.status(200).json({
+            message: "Reels Found",
+            data: updatedReelsArr,
+            totalPages: Math.ceil(totalCount / limit),
+            currentPage: page,
+            success: true,
+        });
+    } catch (err) {
+        next(err);
+    }
+};
+
+export const getReelsPaginatedCategorytest = async (req, res, next) => {
     try {
         if (!req.user) {
             return res.status(401).json({ message: "Unauthorized" });
@@ -214,16 +385,11 @@ export const getReelsPaginatedTesting = async (req, res, next) => {
             })
         );
 
-        console.log(categoryResults, "categoryResults");    
-        
-
         // Flatten results and shuffle
         let selectedReels = categoryResults.flat();
         selectedReels.sort(() => Math.random() - 0.5); // Shuffle
 
-console.log(selectedReels, "selectedReels");
-
-
+        console.log(selectedReels, "selectedReels");
 
         // Pagination logic
         const totalReels = selectedReels.length;

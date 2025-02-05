@@ -136,7 +136,7 @@ export const getAllCoupons = async (req, res, next) => {
         next(error);
     }
 };
-export const getAllCouponsAnalytics = async (req, res, next) => {
+export const getAllCouponsAnalyticsold = async (req, res, next) => {
     try {
         let couponsArr = await Coupon.find({}).lean().exec();
 
@@ -159,6 +159,21 @@ export const getAllCouponsAnalytics = async (req, res, next) => {
         res.status(200).json({
             message: "Coupons Summary",
             data: data, // Return the array containing the total values
+            success: true,
+        });
+    } catch (error) {
+        console.error(error);
+        next(error);
+    }
+};
+
+export const getAllCouponsAnalytics = async (req, res, next) => {
+    try {
+        const [totalCouponUsed, totalCouponUnused] = await Promise.all([Coupon.countDocuments({ maximumNoOfUsersAllowed: 0 }), Coupon.countDocuments({ maximumNoOfUsersAllowed: 1 })]);
+
+        res.status(200).json({
+            message: "Coupons Summary",
+            data: [totalCouponUsed, totalCouponUnused], // Data as an array
             success: true,
         });
     } catch (error) {
@@ -239,7 +254,6 @@ export const getActiveCoupons = async (req, res, next) => {
 
         let CouponArr = await Coupon.find(query).lean().exec();
         console.log(CouponArr, "CouponArr");
-        
 
         res.status(200).json({ message: "active coupons", data: CouponArr, success: true });
     } catch (error) {

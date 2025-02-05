@@ -25,7 +25,7 @@ let User = mongoose.Schema(
         password: { type: String },
 
         points: { type: Number, default: 100 },
-        isActive: { type: Boolean, default: true },
+        isActive: { type: Boolean, default: false },
         role: {
             type: String,
             default: rolesObj.CARPENTER,

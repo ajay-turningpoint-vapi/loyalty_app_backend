@@ -1,10 +1,9 @@
 import { pointTransactionType } from "../helpers/Constants";
 import ReelLikes from "../models/reelLikes.model";
-import Reels from "../models/reels.model";
+
 import Reel from "../models/reels.model";
 import User from "../models/user.model";
 import { createPointlogs } from "./pointHistory.controller";
-
 
 export const likeReels = async (req, res, next) => {
     try {
@@ -29,6 +28,37 @@ export const likeReels = async (req, res, next) => {
         next(err);
     }
 };
+
+export const likeReelstest = async (req, res, next) => {
+    try {
+        const { userId, reelId } = req.body;
+        const reelObj = await Reel.findById(reelId).exec();
+
+        if (!reelObj) {
+            return res.status(404).json({ message: "Reel not found", success: false });
+        }
+
+        // Check if the user already liked the reel by checking the Map
+        if (reelObj?.likedBy?.has(userId)) {
+            return res.status(200).json({ message: "Reel already liked", success: false });
+        }
+
+        // Add the user to the likedBy map
+        reelObj?.likedBy?.set(userId, true); // Mark as liked
+        await reelObj.save();
+
+        // Add points to the user for liking the reel
+        const pointsToEarn = reelObj.points;
+        await createPointlogs(userId, pointsToEarn, pointTransactionType.CREDIT, `Earned ${pointsToEarn} points for liking a reel`, "Reel", "success");
+        await User.findByIdAndUpdate(userId, { $inc: { points: pointsToEarn } }).exec();
+
+        res.status(200).json({ message: "Liked Reel Successfully", success: true });
+    } catch (err) {
+        next(err);
+    }
+};
+
+
 
 export const getLikeCount = async (req, res, next) => {
     try {

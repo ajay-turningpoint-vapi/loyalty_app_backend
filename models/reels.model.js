@@ -12,10 +12,10 @@ let reels = mongoose.Schema(
         isLiked: { type: Boolean, default: false },
         type: { type: String, require: true },
         description: { type: String },
+        likedBy: { type: Map, of: Boolean },
     },
     { timestamps: true }
 );
-
 
 reels.index({ fileUrl: 1 });
 export default mongoose.model("reels", reels);

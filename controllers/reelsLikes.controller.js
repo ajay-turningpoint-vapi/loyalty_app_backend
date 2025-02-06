@@ -32,33 +32,40 @@ export const likeReels = async (req, res, next) => {
 export const likeReelstest = async (req, res, next) => {
     try {
         const { userId, reelId } = req.body;
-        const reelObj = await Reel.findById(reelId).exec();
 
-        if (!reelObj) {
-            return res.status(404).json({ message: "Reel not found", success: false });
+        // Find the reel and user
+        const reel = await Reel.findById(reelId);
+        const user = await User.findById(userId);
+
+        if (!reel || !user) {
+            return res.status(404).json({ message: "User or Reel not found", success: false });
         }
 
-        // Check if the user already liked the reel by checking the Map
-        if (reelObj?.likedBy?.has(userId)) {
+        // Check if user already liked the reel
+        const alreadyLiked = reel.likedBy?.get(userId) || false;
+
+        if (!alreadyLiked) {
+            // Like the reel
+            reel?.likedBy.set(userId, true);
+            user?.likedReels.push(reelId);
+
+            // Earn points
+            const pointsToEarn = parseInt(reel.points) || 0;
+            let mobileDescription = "Reel";
+            await createPointlogs(userId, pointsToEarn, pointTransactionType.CREDIT, `Earned ${pointsToEarn} points for liking a reel`, mobileDescription, "success");
+            await User.findByIdAndUpdate(userId, { $inc: { points: pointsToEarn } });
+
+            await reel.save();
+            await user.save();
+
+            return res.status(200).json({ message: "Liked Reel Successfully", success: true });
+        } else {
             return res.status(200).json({ message: "Reel already liked", success: false });
         }
-
-        // Add the user to the likedBy map
-        reelObj?.likedBy?.set(userId, true); // Mark as liked
-        await reelObj.save();
-
-        // Add points to the user for liking the reel
-        const pointsToEarn = reelObj.points;
-        await createPointlogs(userId, pointsToEarn, pointTransactionType.CREDIT, `Earned ${pointsToEarn} points for liking a reel`, "Reel", "success");
-        await User.findByIdAndUpdate(userId, { $inc: { points: pointsToEarn } }).exec();
-
-        res.status(200).json({ message: "Liked Reel Successfully", success: true });
     } catch (err) {
         next(err);
     }
 };
-
-
 
 export const getLikeCount = async (req, res, next) => {
     try {

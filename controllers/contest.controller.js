@@ -1647,7 +1647,7 @@ export const currentContest = async (req, res, next) => {
     }
 };
 
-export const getCurrentContestRewards = async (req, res, next) => {
+export const getCurrentContestRewardsold = async (req, res, next) => {
     try {
         // Get the current date and time
         const currentDateTime = new Date();
@@ -1687,6 +1687,201 @@ export const getCurrentContestRewards = async (req, res, next) => {
         next(err);
     }
 };
+
+
+export const getCurrentContestRewards = async (req, res, next) => {
+    try {
+        // Get the current date and time
+        const currentDateTime = new Date();
+
+        // Find the most recent closed contest whose end date is before or equal to the current date
+        const currentContest = await Contest.findOne({
+            status: "CLOSED",
+            endTime: { $lte: currentDateTime },
+        })
+            .select("name image") // Select both the contest name and image
+            .sort({ endDate: -1, endTime: -1 }) // Sort in descending order to get the most recent contest first
+            .lean()
+            .exec();
+
+        if (!currentContest) {
+            return res.status(404).json({ message: "No recent closed contest found", success: false });
+        }
+
+        // Find contest prizes for the current contest
+        const currentContestPrizes = await Prize.find({ contestId: currentContest._id }).sort({ rank: 1 }).lean().exec();
+
+        // Fetch all winner details at once
+        const winners = await userContest.find({ contestId: currentContest._id, status: "win", rank: { $in: currentContestPrizes.map(p => p.rank) } })
+            .populate("userId", "name image phone") // Populate user details for all winners at once
+            .lean()
+            .exec();
+
+        // Map over the prizes and attach the corresponding winner details
+        const winnersByRank = winners.reduce((acc, winner) => {
+            acc[winner.rank] = winner.userId;
+            return acc;
+        }, {});
+
+        const contestPrizesWithWinners = currentContestPrizes.map(prize => {
+            const winner = winnersByRank[prize.rank] || null;
+            return {
+                ...prize,
+                winnerDetails: winner ? { name: winner.name, image: winner.image, phone: winner.phone } : null,
+            };
+        });
+
+        // Include only the contest name and contest prizes with winner details in the response
+        const responseData = {
+            contestName: currentContest.name,
+            contestPrizes: contestPrizesWithWinners,
+        };
+
+        // Send the response
+        res.status(200).json({ message: "Recent closed contest information retrieved successfully", data: responseData, success: true });
+    } catch (err) {
+        // Handle errors
+        next(err);
+    }
+};
+
+
+export const getPreviousContestRewards1 = async (req, res, next) => {
+    try {
+        // Get the current date and time
+        const currentDateTime = new Date();
+
+        // Find the most recent closed contest whose end date is before or equal to the current date
+        const currentContest = await Contest.findOne({
+            status: "CLOSED",
+            endDate: { $lte: currentDateTime },
+        })
+            .select("name")
+            .sort({ endDate: -1, endTime: -1 }) // Sort in descending order to get the most recent contest first
+            .lean()
+            .exec();
+
+        if (!currentContest) {
+            return res.status(404).json({ message: "No recent closed contest found", success: false });
+        }
+
+        // Find the second most recent closed contest whose end date is before or equal to the current date
+        const previousContest = await Contest.findOne({
+            status: "CLOSED",
+            endDate: { $lt: currentDateTime },
+            _id: { $ne: currentContest._id }, // Exclude the ID of the current contest
+        })
+            .sort({ endDate: -1, endTime: -1 }) // Sort in descending order to get the second most recent contest first
+            .lean()
+            .exec();
+        console.log("previousContest".previousContest);
+
+        if (!previousContest) {
+            return res.status(404).json({ message: "No previous closed contest found", success: false });
+        }
+
+        // Find users who won the previous contest
+        const previousContestUsers = await userContest.find({ contestId: previousContest._id, status: "win" }).lean().exec();
+
+        // Find contest prizes for the previous contest
+        const previousContestPrizes = await Prize.find({ contestId: previousContest._id }).sort({ rank: 1 }).lean().exec();
+
+        // Attach user details to the previous contest prizes
+        for (const prize of previousContestPrizes) {
+            const winner = await userContest.findOne({ contestId: prize.contestId, rank: prize.rank, status: "win" }).populate("userId").lean().exec();
+            prize.winnerDetails = winner?.userId ? await userModel.findById(winner.userId).select("name image phone -_id").lean().exec() : null;
+        }
+
+        const responseData = {
+            contestName: previousContest.name,
+            contestPrizes: previousContestPrizes,
+        };
+
+        // Send the response
+        res.status(200).json({ message: "Previous closed contest information retrieved successfully", data: responseData, success: true });
+    } catch (err) {
+        // Handle errors
+        next(err);
+    }
+};
+
+
+export const getPreviousContestRewards = async (req, res, next) => {
+    try {
+        // Get the current date and time
+        const currentDateTime = new Date();
+
+        // Find the most recent closed contest whose end date is before or equal to the current date
+        const currentContest = await Contest.findOne({
+            status: "CLOSED",
+            endDate: { $lte: currentDateTime },
+        })
+            .select("name")
+            .sort({ endDate: -1, endTime: -1 }) // Sort in descending order to get the most recent contest first
+            .lean()
+            .exec();
+
+        if (!currentContest) {
+            return res.status(404).json({ message: "No recent closed contest found", success: false });
+        }
+
+        // Find the second most recent closed contest whose end date is before or equal to the current date
+        const previousContest = await Contest.findOne({
+            status: "CLOSED",
+            endDate: { $lt: currentDateTime },
+            _id: { $ne: currentContest._id }, // Exclude the ID of the current contest
+        })
+            .select("name")
+            .sort({ endDate: -1, endTime: -1 }) // Sort in descending order to get the second most recent contest first
+            .lean()
+            .exec();
+
+        if (!previousContest) {
+            return res.status(404).json({ message: "No previous closed contest found", success: false });
+        }
+
+        // Find contest prizes for the previous contest
+        const previousContestPrizes = await Prize.find({ contestId: previousContest._id }).sort({ rank: 1 }).lean().exec();
+
+        // Fetch all winners for the previous contest in one query
+        const winners = await userContest.find({
+            contestId: previousContest._id,
+            status: "win",
+            rank: { $in: previousContestPrizes.map(p => p.rank) },
+        })
+            .populate("userId", "name image phone") // Populate user details for all winners at once
+            .lean()
+            .exec();
+
+        // Map winners to their respective ranks
+        const winnersByRank = winners.reduce((acc, winner) => {
+            acc[winner.rank] = winner.userId;
+            return acc;
+        }, {});
+
+        // Attach winner details to the contest prizes
+        const contestPrizesWithWinners = previousContestPrizes.map(prize => {
+            const winner = winnersByRank[prize.rank] || null;
+            return {
+                ...prize,
+                winnerDetails: winner ? { name: winner.name, image: winner.image, phone: winner.phone } : null,
+            };
+        });
+
+        const responseData = {
+            contestName: previousContest.name,
+            contestPrizes: contestPrizesWithWinners,
+        };
+
+        // Send the response
+        res.status(200).json({ message: "Previous closed contest information retrieved successfully", data: responseData, success: true });
+    } catch (err) {
+        // Handle errors
+        next(err);
+    }
+};
+
+
 
 export const sendContestNotifications = async (req, res, next) => {
     const { contestId } = req.params;
@@ -1767,66 +1962,6 @@ export const sendContestNotifications = async (req, res, next) => {
         next(err); // Pass the error to the error handler middleware
     }
 };
-
-export const getPreviousContestRewards = async (req, res, next) => {
-    try {
-        // Get the current date and time
-        const currentDateTime = new Date();
-
-        // Find the most recent closed contest whose end date is before or equal to the current date
-        const currentContest = await Contest.findOne({
-            status: "CLOSED",
-            endDate: { $lte: currentDateTime },
-        })
-            .select("name")
-            .sort({ endDate: -1, endTime: -1 }) // Sort in descending order to get the most recent contest first
-            .lean()
-            .exec();
-
-        if (!currentContest) {
-            return res.status(404).json({ message: "No recent closed contest found", success: false });
-        }
-
-        // Find the second most recent closed contest whose end date is before or equal to the current date
-        const previousContest = await Contest.findOne({
-            status: "CLOSED",
-            endDate: { $lt: currentDateTime },
-            _id: { $ne: currentContest._id }, // Exclude the ID of the current contest
-        })
-            .sort({ endDate: -1, endTime: -1 }) // Sort in descending order to get the second most recent contest first
-            .lean()
-            .exec();
-        console.log("previousContest".previousContest);
-
-        if (!previousContest) {
-            return res.status(404).json({ message: "No previous closed contest found", success: false });
-        }
-
-        // Find users who won the previous contest
-        const previousContestUsers = await userContest.find({ contestId: previousContest._id, status: "win" }).lean().exec();
-
-        // Find contest prizes for the previous contest
-        const previousContestPrizes = await Prize.find({ contestId: previousContest._id }).sort({ rank: 1 }).lean().exec();
-
-        // Attach user details to the previous contest prizes
-        for (const prize of previousContestPrizes) {
-            const winner = await userContest.findOne({ contestId: prize.contestId, rank: prize.rank, status: "win" }).populate("userId").lean().exec();
-            prize.winnerDetails = winner?.userId ? await userModel.findById(winner.userId).select("name image -_id").lean().exec() : null;
-        }
-
-        const responseData = {
-            contestName: previousContest.name,
-            contestPrizes: previousContestPrizes,
-        };
-
-        // Send the response
-        res.status(200).json({ message: "Previous closed contest information retrieved successfully", data: responseData, success: true });
-    } catch (err) {
-        // Handle errors
-        next(err);
-    }
-};
-
 const getOrdinal = (num) => {
     const suffixes = ["th", "st", "nd", "rd"];
     const value = num % 100;
@@ -2145,25 +2280,6 @@ export const checkContest = async (req, res) => {
         res.status(500).json({ message: "Internal Server Error" });
     }
 };
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 export const checkContestPrevious = async (date, time) => {
     console.log("Checking contests for date and time:", date, time);

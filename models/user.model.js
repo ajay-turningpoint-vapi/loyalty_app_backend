@@ -69,7 +69,10 @@ let User = mongoose.Schema(
         referredBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
         referralRewards: [{ type: mongoose.Schema.Types.ObjectId, ref: "ReferralRewards" }],
         referralPointsAwarded: { type: Boolean, default: false },
-        rewardedReferrals: [{ type: mongoose.Schema.Types.ObjectId, ref: "Users" }],
+        rewardedReferrals: [{ type: mongoose.Schema.Types.ObjectId, ref: "User" }],
+
+        likedReels: [{ type: mongoose.Schema.Types.ObjectId, ref: "reels" }], // Stores liked reels
+        totalReelViews: { type: Number, default: 0 },
     },
     { timestamps: true }
 );

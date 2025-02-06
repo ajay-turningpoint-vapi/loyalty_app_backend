@@ -15,7 +15,7 @@ let Contest = mongoose.Schema(
         startTime: String,
         endTime: String,
         antimationTime: String,
-        // getWinnersCombinedDateandTime: {type:String,default:null},
+   
         status: {
             type: String,
             default: generalModelStatuses.APPROVED,

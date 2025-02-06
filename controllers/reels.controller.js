@@ -48,52 +48,6 @@ export const getReelsold = async (req, res, next) => {
     }
 };
 
-export const getReelslatest = async (req, res, next) => {
-    try {
-        let { page = 1, limit = 10 } = req.query;
-        page = parseInt(page, 10);
-        limit = parseInt(limit, 10);
-
-        // Count total reels
-        const totalReels = await Reels.countDocuments();
-
-        // Fetch reels with pagination
-        let reelsArr = await Reels.find()
-            .sort({ createdAt: -1 })
-            .skip((page - 1) * limit)
-            .limit(limit)
-            .exec();
-
-        if (reelsArr.length === 0) {
-            return res.status(200).json({
-                message: "No reels created yet",
-                data: [],
-                totalPages: 0,
-                currentPage: page,
-                success: true,
-            });
-        }
-
-        // Add totalLikes for each reel
-        const reelsWithLikes = await Promise.all(
-            reelsArr.map(async (reel) => {
-                const totalLikes = await ReelLikes.countDocuments({ reelId: reel._id });
-                return { ...reel.toObject(), totalLikes };
-            })
-        );
-
-        res.status(200).json({
-            message: "Reels Found",
-            data: reelsWithLikes,
-            totalPages: Math.ceil(totalReels / limit),
-            currentPage: page,
-            success: true,
-        });
-    } catch (err) {
-        next(err);
-    }
-};
-
 export const getReels = async (req, res, next) => {
     try {
         let { page = 1, limit = 10 } = req.query;
@@ -150,6 +104,24 @@ export const getReels = async (req, res, next) => {
     }
 };
 
+export const getReelsTest = async (req, res, next) => {
+    try {
+        const reels = await Reels.find().sort({ createdAt: -1 }); // Fetch and sort reels by latest
+
+        const processedReels = reels.map((reel) => ({
+            points: reel.points,
+            fileUrl: reel.fileUrl,
+            type: reel.type,
+            isVideo: reel.isVideo,
+            likeCount: reel.likedBy ? reel.likedBy.size : 0, // Get total likes
+        }));
+
+        res.status(200).json({ data: processedReels, success: true });
+    } catch (err) {
+        next(err);
+    }
+};
+
 export const getReelsAnalytics = async (req, res, next) => {
     try {
         // Aggregate the createdAt dates based on month
@@ -181,7 +153,7 @@ export const getReelsAnalytics = async (req, res, next) => {
     }
 };
 
-export const getReelsPaginated = async (req, res, next) => {
+export const getReelsPaginatedWOrking = async (req, res, next) => {
     try {
         if (!req.user) {
             return res.status(401).json({ message: "Unauthorized" });
@@ -236,64 +208,54 @@ export const getReelsPaginated = async (req, res, next) => {
     }
 };
 
-export const getReelsPaginatedworking = async (req, res, next) => {
+export const getReelsPaginated = async (req, res, next) => {
     try {
         if (!req.user) {
             return res.status(401).json({ message: "Unauthorized" });
         }
 
-        const limit = parseInt(req.query.limit, 10) || 10;
-        const page = parseInt(req.query.page, 10) || 1;
+        const limit = parseInt(req.query.limit) || 10;
+        const page = parseInt(req.query.page) || 1;
 
-        if (page <= 0) {
-            return res.status(400).json({ message: "Invalid page parameter", success: false });
+        if (!Number.isInteger(page) || page <= 0) {
+            return res.status(400).json({ message: "Invalid URL: Page parameter is missing or invalid", success: false });
         }
 
+        // Calculate offset based on page number
         const skip = (page - 1) * limit;
 
-        // Get total count of reels (cached if needed)
-        const totalCount = await Reels.countDocuments();
+        const totalCount = await Reels.countDocuments(); // Changed to match new schema
 
         if (totalCount === 0) {
             return res.status(404).json({ message: "No reels found", success: false });
         }
 
-        // Fetch reels with liked status using a **single query**
+        // Fetch reels excluding the ones already shown on the current page
         const reelsArr = await Reels.aggregate([
-            { $skip: skip },
-            { $limit: limit },
-            {
-                $lookup: {
-                    from: "reellikes",
-                    let: { reelId: "$_id" },
-                    pipeline: [
-                        { $match: { $expr: { $eq: ["$reelId", "$$reelId"] }, userId: req.user.userId } },
-                        { $limit: 1 }, // Only check if the user liked it
-                    ],
-                    as: "userLike",
-                },
-            },
-            {
-                $addFields: {
-                    likedByCurrentUser: { $gt: [{ $size: "$userLike" }, 0] }, // Convert array to boolean
-                },
-            },
-            { $project: { userLike: 0 } }, // Exclude unnecessary fields
+            { $sample: { size: limit + skip } }, // Fetch more than needed to ensure enough unique reels
+            { $skip: skip }, // Skip the ones for previous pages
+            { $limit: limit }, // Limit to required reels
         ]);
 
-        // Log user activity asynchronously to prevent blocking response
-        ActivityLog.create({
+        const reelsWithLikedStatus = reelsArr.map((reel) => {
+            // Check if the current user liked the reel
+            const isLikedByUser = reel?.likedBy && reel?.likedBy[req.user.userId];
+
+            return {
+                fileUrl: reel.fileUrl,
+                points: reel.points,
+                _id: reel._id,
+                isLiked: isLikedByUser, // Whether the current user liked the reel
+            };
+        });
+
+        // Log the activity
+        await ActivityLog.create({
             userId: req.user.userId,
             type: "Watching Reels",
-        }).catch((err) => console.error("Activity log error:", err));
-
-        res.status(200).json({
-            message: "Reels Found",
-            data: reelsArr,
-            totalPages: Math.ceil(totalCount / limit),
-            currentPage: page,
-            success: true,
         });
+
+        res.status(200).json({ message: "Reels Found", data: reelsWithLikedStatus, success: true });
     } catch (err) {
         next(err);
     }
@@ -305,49 +267,97 @@ export const getReelsPaginatedtest = async (req, res, next) => {
             return res.status(401).json({ message: "Unauthorized" });
         }
 
-        const limit = parseInt(req.query.limit, 10) || 10;
-        const page = parseInt(req.query.page, 10) || 1;
+        const limit = parseInt(req.query.limit) || 10; // Overall limit per page
+        const page = parseInt(req.query.page) || 1;
 
-        if (page <= 0) {
-            return res.status(400).json({ message: "Invalid page parameter", success: false });
+        if (!Number.isInteger(page) || page <= 0) {
+            return res.status(400).json({ message: "Invalid URL: Page parameter is missing or invalid", success: false });
         }
 
-        const skip = (page - 1) * limit;
+        // Define the desired count for each type per page
+        const typeCounts = {
+            Entertainment: 4,
+            "Knowledge (Social Media)": 1,
+            "Knowledge (Community Member)": 1,
+            "Skills (Social Media)": 1,
+            "Skills (Community Member)": 1,
+            Promotion: 1,
+            "Special Event": 1,
+        };
 
-        // Get total count of reels (cached if needed)
-        const totalCount = await Reels.countDocuments();
+        let allReels = [];
 
-        if (totalCount === 0) {
-            return res.status(404).json({ message: "No reels found", success: false });
+        // Loop through each type and fetch random reels
+        for (const [type, count] of Object.entries(typeCounts)) {
+            // Fetch random reels of the specific type, if available
+            const reels = await Reels.aggregate([
+                { $match: { type } },
+                { $sample: { size: count } }, // Sample random reels of the required count
+            ]);
+
+            // If we don't have enough reels of the specific type, fall back to "Entertainment"
+            if (reels.length < count && type !== "Entertainment") {
+                const missingCount = count - reels.length;
+
+                // Fetch missing random reels from "Entertainment"
+                const fallbackReels = await Reels.aggregate([
+                    { $match: { type: "Entertainment" } },
+                    { $sample: { size: missingCount } }, // Sample random "Entertainment" reels
+                ]);
+
+                // Combine the current type's reels with the fallback reels
+                allReels = [...allReels, ...reels, ...fallbackReels];
+            } else {
+                // If we have enough reels of the current type, just add them
+                allReels = [...allReels, ...reels];
+            }
         }
 
-        // Fetch reels with liked status using a **single query**
-        const reelsArr = await Reels.find().skip(skip).limit(limit);
+        // Map through the reels to determine if the current user liked them
+        const reelsWithLikedStatus = allReels.map((reel) => {
+            const isLikedByUser = reel?.likedBy && reel?.likedBy[req.user.userId];
 
-        // Add likedByCurrentUser field directly from the Map
-        const updatedReelsArr = reelsArr.map((reel) => {
-            const likedByCurrentUser = reel.likedBy?.get(req.user.userId) || false;
             return {
-                ...reel.toObject(),
-                likedByCurrentUser, // Add likedByCurrentUser field
+                fileUrl: reel.fileUrl,
+                points: reel.points,
+                _id: reel._id,
+                isLiked: isLikedByUser, // Whether the current user liked the reel
             };
         });
 
-        // Log user activity asynchronously to prevent blocking response
-        ActivityLog.create({
+        // Log the activity
+        await ActivityLog.create({
             userId: req.user.userId,
             type: "Watching Reels",
-        }).catch((err) => console.error("Activity log error:", err));
-
-        res.status(200).json({
-            message: "Reels Found",
-            data: updatedReelsArr,
-            totalPages: Math.ceil(totalCount / limit),
-            currentPage: page,
-            success: true,
         });
+
+        res.status(200).json({ message: "Reels Found", data: reelsWithLikedStatus, success: true });
     } catch (err) {
         next(err);
+    }
+};
+
+export const updateType = async (req, res) => {
+    try {
+        // Perform bulk update on all reels, excluding specific types
+        const result = await Reels.updateMany(
+            {
+                type: {
+                    $nin: ["Entertainment", "Knowledge Social Media", "Knowledge Community Member", "Skills Social Media", "Skills Community Member", "Promotion", "Special Event"],
+                },
+            },
+            { $set: { type: "Lifestyle Reels" } } // Update the "type" field
+        );
+
+        // Check if any documents were modified
+        if (result.modifiedCount === 0) {
+            return res.status(404).json({ message: "No reels were updated" });
+        }
+
+        return res.status(200).json({ message: "Reels type updated successfully", data: result });
+    } catch (err) {
+        console.error(err);
+        return res.status(500).json({ message: "Server Error", error: err.message });
     }
 };
 

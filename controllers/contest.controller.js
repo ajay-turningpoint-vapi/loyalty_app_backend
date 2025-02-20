@@ -1297,6 +1297,25 @@ export const joinContestByCoupon = async (req, res, next) => {
     }
 };
 
+export const addUserContestNote = async (req, res) => {
+    try {
+        const { _id, text, image } = req.body;
+
+
+        // Update the contest entry using $push to add note efficiently
+        const updatedContest = await userContest.findByIdAndUpdate(_id, { $push: { note: { text, image } } }, { new: true, runValidators: true });
+
+        if (!updatedContest) {
+            return res.status(404).json({ message: "User contest entry not found." });
+        }
+
+        res.status(200).json({ message: "Note added successfully", userContest: updatedContest });
+    } catch (error) {
+        console.error("Error adding note:", error);
+        res.status(500).json({ message: "Internal Server Error", error: error.message });
+    }
+};
+
 export const joinContestByCouponOldButWorking = async (req, res, next) => {
     try {
         let ContestObj = await Contest.findById(req.params.id).exec();
@@ -1688,7 +1707,6 @@ export const getCurrentContestRewardsold = async (req, res, next) => {
     }
 };
 
-
 export const getCurrentContestRewards = async (req, res, next) => {
     try {
         // Get the current date and time
@@ -1712,7 +1730,8 @@ export const getCurrentContestRewards = async (req, res, next) => {
         const currentContestPrizes = await Prize.find({ contestId: currentContest._id }).sort({ rank: 1 }).lean().exec();
 
         // Fetch all winner details at once
-        const winners = await userContest.find({ contestId: currentContest._id, status: "win", rank: { $in: currentContestPrizes.map(p => p.rank) } })
+        const winners = await userContest
+            .find({ contestId: currentContest._id, status: "win", rank: { $in: currentContestPrizes.map((p) => p.rank) } })
             .populate("userId", "name image phone") // Populate user details for all winners at once
             .lean()
             .exec();
@@ -1723,7 +1742,7 @@ export const getCurrentContestRewards = async (req, res, next) => {
             return acc;
         }, {});
 
-        const contestPrizesWithWinners = currentContestPrizes.map(prize => {
+        const contestPrizesWithWinners = currentContestPrizes.map((prize) => {
             const winner = winnersByRank[prize.rank] || null;
             return {
                 ...prize,
@@ -1744,7 +1763,6 @@ export const getCurrentContestRewards = async (req, res, next) => {
         next(err);
     }
 };
-
 
 export const getPreviousContestRewards1 = async (req, res, next) => {
     try {
@@ -1805,7 +1823,6 @@ export const getPreviousContestRewards1 = async (req, res, next) => {
     }
 };
 
-
 export const getPreviousContestRewards = async (req, res, next) => {
     try {
         // Get the current date and time
@@ -1844,11 +1861,12 @@ export const getPreviousContestRewards = async (req, res, next) => {
         const previousContestPrizes = await Prize.find({ contestId: previousContest._id }).sort({ rank: 1 }).lean().exec();
 
         // Fetch all winners for the previous contest in one query
-        const winners = await userContest.find({
-            contestId: previousContest._id,
-            status: "win",
-            rank: { $in: previousContestPrizes.map(p => p.rank) },
-        })
+        const winners = await userContest
+            .find({
+                contestId: previousContest._id,
+                status: "win",
+                rank: { $in: previousContestPrizes.map((p) => p.rank) },
+            })
             .populate("userId", "name image phone") // Populate user details for all winners at once
             .lean()
             .exec();
@@ -1860,7 +1878,7 @@ export const getPreviousContestRewards = async (req, res, next) => {
         }, {});
 
         // Attach winner details to the contest prizes
-        const contestPrizesWithWinners = previousContestPrizes.map(prize => {
+        const contestPrizesWithWinners = previousContestPrizes.map((prize) => {
             const winner = winnersByRank[prize.rank] || null;
             return {
                 ...prize,
@@ -1880,8 +1898,6 @@ export const getPreviousContestRewards = async (req, res, next) => {
         next(err);
     }
 };
-
-
 
 export const sendContestNotifications = async (req, res, next) => {
     const { contestId } = req.params;
@@ -2193,12 +2209,16 @@ const postContestUpdates = async (contestId, validContestUsers) => {
         console.error("Error posting contest updates:", error);
     }
 };
+
+
+
+
 export const checkContest = async (req, res) => {
     try {
         // Update status to PROCESSING
         //  (to prevent duplicate processing)
 
-        let contestId = "67988f7c04c549a72fa25375";
+        let contestId = "67a5d3e19e8fa09f8d8b2ba0";
         const updatedContest = await Contest.findOneAndUpdate({ _id: contestId, status: "APPROVED" }, { $set: { status: "PROCESSING" } }, { new: true }).exec();
 
         if (!updatedContest) {

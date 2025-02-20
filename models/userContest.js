@@ -11,7 +11,12 @@ let userContest = mongoose.Schema(
             type: Boolean,
             default: false,
         },
+        note: [{
+            text: { type: String }, 
+            image: { type: String }, 
+        }],
     },
+
     { timestamps: true }
 );
 

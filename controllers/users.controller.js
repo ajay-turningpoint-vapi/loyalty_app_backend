@@ -4,6 +4,7 @@ import { ErrorMessages, pointTransactionType, rolesObj } from "../helpers/Consta
 import { storeFileAndReturnNameBase64 } from "../helpers/fileSystem";
 import { generateAccessJwt, generateRefreshJwt } from "../helpers/Jwt";
 import { ValidateEmail, validNo } from "../helpers/Validators";
+import ExcelJS from "exceljs";
 import Users from "../models/user.model";
 import UserContest from "../models/userContest";
 import Contest from "../models/contest.model";
@@ -29,6 +30,8 @@ import CouponsModel from "../models/Coupons.model";
 import ProductModel from "../models/product.model";
 import ReelsModel from "../models/reels.model";
 import "dotenv/config";
+import userContest from "../models/userContest";
+import reelLikesModel from "../models/reelLikes.model";
 const geolib = require("geolib");
 const AWS = require("aws-sdk");
 
@@ -97,93 +100,101 @@ export const verifyOtp = async (req, res) => {
     res.status(200).json({ message: "OTP verified successfully" });
 };
 
-export const googleLoginTestOldButWorking = async (req, res) => {
+export const googleLoginOptimizedoLD = async (req, res) => {
     const { idToken, fcmToken } = req.body;
 
+    console.log(`[Login] Received Google login request. ID Token: ${idToken ? "Present" : "Missing"}, FCM Token: ${fcmToken || "Not provided"}`);
+
     if (!idToken) {
+        console.warn("[Login] ID token is missing. Returning error.");
         return res.status(400).json({ message: "ID token is required", status: false });
     }
 
     try {
-        // Verify Google ID token
+        // Verify Google ID Token
         const { uid } = await admin.auth().verifyIdToken(idToken);
+        console.log(`[Login] Google ID Token verified. UID: ${uid}`);
 
-        // Check if user exists
         const existingUser = await Users.findOne({ uid }).exec();
-        if (existingUser) {
-            let previousFcmToken = existingUser.fcmToken;
 
-            if (previousFcmToken != fcmToken) {
-                const title = "Session Terminated";
-                const body = "Account was logged in on another device";
-                await sendNotificationMessage(existingUser._id, title, body, "session_expired");
-            }
-
-            // Remove any existing token for the user
-            await Token.deleteMany({ uid });
-
-            // Generate new access token
-            const accessToken = await generateAccessJwt({
-                userId: existingUser._id,
-                role: existingUser.role,
-                name: existingUser.name,
-                phone: existingUser.phone,
-                email: existingUser.email,
-                uid: existingUser.uid,
-                fcmToken: existingUser.fcmToken,
-            });
-
-            const refreshToken = await generateRefreshJwt({
-                userId: existingUser._id,
-                role: existingUser.role,
-                name: existingUser.name,
-                phone: existingUser.phone,
-                email: existingUser.email,
-                uid: existingUser.uid,
-                fcmToken: existingUser.fcmToken,
-            });
-            await Token.create({ uid: existingUser.uid, userId: existingUser._id, token: accessToken, refreshToken, fcmToken: existingUser.fcmToken });
-
-            // Update user FCM token
-            existingUser.fcmToken = fcmToken;
-            await existingUser.save();
-
-            //Notification to the current device to let the users know they have been terminated from the previous device
-            if (previousFcmToken != fcmToken) {
-                const title = "Session Terminated";
-                const body = "You have been logged out from another device";
-                await sendNotificationMessage(existingUser._id, title, body, "session_expiry_notification");
-            }
-
-            // Respond with success
-            res.status(200).json({
-                message: "Login successful",
-                status: true,
-                token: accessToken,
-                refreshToken: refreshToken,
-            });
-        } else {
-            res.status(200).json({ message: "User not registered", status: false });
+        if (!existingUser) {
+            console.warn(`[Login] User not found in database. UID: ${uid}`);
+            return res.status(200).json({ message: "User not registered", status: false });
         }
+
+        console.log(`[Login] User found. ID: ${existingUser._id}, Email: ${existingUser.email}`);
+
+        const previousFcmToken = existingUser.fcmToken;
+        console.log(`[Login] Previous FCM Token: ${previousFcmToken || "None"}`);
+
+        // Handle missing or outdated FCM token
+        if (!fcmToken || fcmToken.length < 10) {
+            console.warn(`[Login] Invalid or missing FCM token for user: ${existingUser._id}`);
+            return res.status(401).json({
+                message: "FCM token is invalid or missing. Please log in again.",
+                status: false,
+            });
+        }
+
+        console.log(`[Login] Valid FCM Token received: ${fcmToken}`);
+
+        // Generate access and refresh tokens
+        const payload = {
+            userId: existingUser._id,
+            role: existingUser.role,
+            name: existingUser.name,
+            phone: existingUser.phone,
+            email: existingUser.email,
+            uid: existingUser.uid,
+            fcmToken,
+        };
+
+        console.log("[Login] Generating access and refresh tokens...");
+        const [accessToken, refreshToken] = await Promise.all([generateAccessJwt(payload), generateRefreshJwt(payload)]);
+
+        console.log(`[Login] Tokens generated. Access Token: ${accessToken.substring(0, 10)}...`);
+
+        // Remove old tokens and store new one
+        console.log("[Login] Removing old tokens and storing new ones...");
+        await Promise.all([Token.deleteMany({ uid }), Token.create({ uid: existingUser.uid, userId: existingUser._id, token: accessToken, refreshToken, fcmToken }), existingUser.updateOne({ fcmToken })]);
+
+        console.log("[Login] Tokens updated in database successfully.");
+
+        // Send logout notification if FCM token changed
+        if (previousFcmToken && previousFcmToken !== fcmToken) {
+            console.warn(`[Login] FCM Token changed for user: ${existingUser._id}. Sending session termination notification.`);
+            const title = "Session Terminated";
+            const body = "Your account was logged in on another device.";
+            await sendNotificationMessage(existingUser._id, title, body, "session_expired");
+        }
+
+        console.log(`[Login] Login successful for user: ${existingUser._id}`);
+
+        return res.status(200).json({
+            message: "Login successful",
+            status: true,
+            token: accessToken,
+            refreshToken,
+        });
     } catch (error) {
-        console.error("Error during Google login:", error);
+        console.error("[Login] Error during Google login:", error);
 
-        let statusCode = 500;
-        let errorMessage = "Internal Server Error";
+        const errorMessages = {
+            "auth/invalid-id-token": "Unauthorized. Invalid or expired token.",
+            "auth/id-token-expired": "Unauthorized. Invalid or expired token.",
+        };
 
-        // Handle specific Firebase Auth errors
-        if (error.code === "auth/invalid-id-token" || error.code === "auth/id-token-expired") {
-            statusCode = 401;
-            errorMessage = "Unauthorized. Invalid or expired token.";
-        } else if (error.message.includes("User not registered")) {
-            statusCode = 404;
-        }
+        const errorMessage = errorMessages[error.code] || "Internal Server Error";
+        console.warn(`[Login] Authentication failed: ${errorMessage}`);
 
-        res.status(statusCode).json({ error: errorMessage, status: false });
+        return res.status(errorMessages[error.code] ? 401 : 500).json({
+            error: errorMessage,
+            status: false,
+        });
     }
 };
 
-export const googleLogin = async (req, res) => {
+export const googleLoginwORKIGN = async (req, res) => {
     const { idToken, fcmToken } = req.body;
 
     if (!idToken) {
@@ -249,6 +260,85 @@ export const googleLogin = async (req, res) => {
         } else {
             res.status(200).json({ message: "User not registered", status: false });
         }
+    } catch (error) {
+        console.error("Error during Google login:", error);
+
+        let statusCode = 500;
+        let errorMessage = "Internal Server Error";
+
+        if (error.code === "auth/invalid-id-token" || error.code === "auth/id-token-expired") {
+            statusCode = 401;
+            errorMessage = "Unauthorized. Invalid or expired token.";
+        }
+
+        res.status(statusCode).json({ error: errorMessage, status: false });
+    }
+};
+
+export const googleLogin = async (req, res) => {
+    const { idToken, fcmToken } = req.body;
+
+    if (!idToken) {
+        return res.status(400).json({ message: "ID token is required", status: false });
+    }
+
+    try {
+        // Verify Google ID Token
+        const { uid } = await admin.auth().verifyIdToken(idToken);
+
+        // Find the user in MongoDB
+        const existingUser = await Users.findOne({ uid }).exec();
+        if (!existingUser) {
+            return res.status(200).json({ message: "User not registered", status: false });
+        }
+
+        // Generate access and refresh tokens
+        const accessToken = await generateAccessJwt({
+            userId: existingUser._id,
+            role: existingUser.role,
+            name: existingUser.name,
+            phone: existingUser.phone,
+            email: existingUser.email,
+            uid: existingUser.uid,
+        });
+
+        const refreshToken = await generateRefreshJwt({
+            userId: existingUser._id,
+            role: existingUser.role,
+            name: existingUser.name,
+            phone: existingUser.phone,
+            email: existingUser.email,
+            uid: existingUser.uid,
+        });
+
+        // Delete old tokens only after successfully generating new ones
+        await Token.deleteMany({ uid });
+
+        // Save new token in the database
+        await Token.create({ uid: existingUser.uid, userId: existingUser._id, token: accessToken, refreshToken, fcmToken });
+
+        // If FCM token has changed, update it and send a session termination notification
+        if (existingUser.fcmToken !== fcmToken) {
+            try {
+                existingUser.fcmToken = fcmToken;
+                await existingUser.save();
+
+                const title = "Session Terminated";
+                const body = "Account was logged in on another device";
+                await sendNotificationMessage(existingUser._id, title, body, "session_expired");
+            } catch (err) {
+                console.error("Error updating FCM token:", err);
+                return res.status(500).json({ message: "Failed to update FCM token", status: false });
+            }
+        }
+
+        // Return response with new tokens
+        res.status(200).json({
+            message: "Login successful",
+            status: true,
+            token: accessToken,
+            refreshToken,
+        });
     } catch (error) {
         console.error("Error during Google login:", error);
 
@@ -647,6 +737,59 @@ export const blockUser = async (req, res, next) => {
         });
     } catch (error) {
         console.error("Error toggling block status:", error);
+        res.status(500).json({ message: "Internal server error." });
+    }
+};
+
+export const updateBlocklowentries = async (req, res) => {
+    try {
+        // Step 1: Aggregate to find users with less than 3 contest entries
+        const usersWithLowEntries = await UserContest.aggregate([
+            {
+                $group: {
+                    _id: "$userId",
+                    entryCount: { $sum: 1 },
+                },
+            },
+            {
+                $match: { entryCount: { $lt: 3 } }, // Users with less than 3 entries
+            },
+            {
+                $project: { userId: "$_id", _id: 0 },
+            },
+        ]);
+
+        const userIdsToBlock = usersWithLowEntries.map((user) => user.userId);
+
+        if (userIdsToBlock.length === 0) {
+            return res.status(200).json({ message: "No users found with less than 3 entries." });
+        }
+
+        // Step 2: Update isBlocked status in User collection
+        const result = await Users.updateMany({ _id: { $in: userIdsToBlock } }, { $set: { isBlocked: true } });
+
+        res.status(200).json({
+            message: "Users with less than 3 contest entries have been blocked.",
+            blockedUsersCount: result.modifiedCount,
+            blockedUserIds: userIdsToBlock,
+        });
+    } catch (error) {
+        console.error("Error blocking users:", error);
+        res.status(500).json({ message: "Internal server error." });
+    }
+};
+
+export const updateAllUsersKycStatus = async (req, res) => {
+    try {
+        // Update all users' kycStatus to "pending"
+        const result = await Users.updateMany({}, { $set: { kycStatus: "pending" } });
+
+        res.status(200).json({
+            message: "All users' kycStatus has been updated to 'pending'.",
+            updatedUsersCount: result.modifiedCount,
+        });
+    } catch (error) {
+        console.error("Error updating KYC status for all users:", error);
         res.status(500).json({ message: "Internal server error." });
     }
 };
@@ -1063,7 +1206,7 @@ export const updateUserProfile = async (req, res, next) => {
     }
 };
 
-export const updateUserProfileAdmin = async (req, res, next) => {
+export const updateUserProfileAdminOld = async (req, res, next) => {
     try {
         // Ensure userId is provided in the request body
         const { userId } = req.body;
@@ -1079,6 +1222,88 @@ export const updateUserProfileAdmin = async (req, res, next) => {
         }
 
         res.status(200).json({ message: "Profile updated successfully", data: userObj, success: true });
+    } catch (err) {
+        next(err);
+    }
+};
+
+export const updateUserProfileAdmin = async (req, res, next) => {
+    try {
+        const { userId, isBlocked, isActive, kycStatus, businessName, ...updateFields } = req.body;
+        console.log("updateFields", updateFields, businessName);
+
+        if (!userId) {
+            return res.status(400).json({ message: "User ID is required", success: false });
+        }
+
+        // Fetch the user
+        let userObj = await Users.findById(userId).exec();
+        if (!userObj) {
+            return res.status(404).json({ message: "User not found", success: false });
+        }
+
+        let updateData = { ...updateFields };
+
+        if (businessName && businessName !== userObj.businessName) {
+            const previousBusinessName = userObj.businessName;
+
+            //     // Update businessName in all users where contractor.businessName matches the old value
+            //     await Users.updateMany(
+            //         { "contractor.businessName": previousBusinessName },
+            //         { $set: { "contractor.businessName": businessName } }
+            //     );
+
+            updateData.businessName = businessName;
+        }
+
+        // Handle block/unblock toggle
+        if (isBlocked !== undefined) {
+            updateData.isBlocked = isBlocked;
+        }
+
+        // Handle user active/inactive status
+        if (isActive !== undefined) {
+            updateData.isActive = isActive;
+            updateData.isActiveDate = isActive ? new Date() : null;
+
+            const title = isActive ? "🌟 बधाई हो! आपका प्रोफ़ाइल मंज़ूर हो गया है!" : "🛑 ध्यान दें: प्रोफाइल को एडमिन ने डिसेबल किया";
+
+            const body = isActive ? "🎉 आपका प्रोफ़ाइल मंज़ूर हो गया! स्वागत है!" : "आपकी प्रोफ़ाइल डिसेबल हो गई है। सहायता के लिए संपर्क करें।";
+
+            await sendNotificationMessage(userId, title, body, "User Status");
+
+            // Handle referral reward when user becomes active for the first time
+            if (isActive && userObj.referredBy && !userObj.isActive) {
+                const referrer = await Users.findById(userObj.referredBy).exec();
+                if (referrer && referrer.isActive && !referrer.rewardedReferrals.includes(userObj._id)) {
+                    referrer.points += 1000;
+                    referrer.rewardedReferrals.push(userObj._id);
+                    await referrer.save();
+
+                    await createPointlogs(referrer._id, 1000, pointTransactionType.CREDIT, `${1000} points for referring ${userObj.name}`, "Referral", "success");
+
+                    await sendNotificationMessage(referrer._id, "🎉 बधाई हो! आपको रेफरल पॉइंट्स मिला है!", "आपको नए यूजर को रेफर करने के लिए 1000 पॉइंट्स मिले हैं!", "referral");
+                }
+            }
+        }
+
+        // Handle KYC status
+        if (kycStatus) {
+            updateData.kycStatus = kycStatus;
+            if (kycStatus === "approved") {
+                updateData.isActive = true;
+                updateData.isActiveDate = new Date();
+
+                await sendNotificationMessage(userId, "🎉 बधाई हो! आपकी KYC मंज़ूर हो गई!", "👏 आपकी KYC मंज़ूर! अब मज़ेदार इनाम पाएं!", "kyc");
+            } else if (kycStatus === "rejected") {
+                await sendNotificationMessage(userId, "🚫 KYC सबमिशन अस्वीकृत", "😔 KYC अस्वीकृत! कृपया फिर से सबमिट करें।", "kyc");
+            }
+        }
+
+        // Update user in DB
+        const updatedUser = await Users.findByIdAndUpdate(userId, updateData, { new: true }).exec();
+
+        res.status(200).json({ message: "User profile updated successfully", data: updatedUser, success: true });
     } catch (err) {
         next(err);
     }
@@ -1187,6 +1412,23 @@ export const updateUserStatusReferredBy = async (req, res, next) => {
     }
 };
 
+export const getActiveUserCount = async (req, res) => {
+    try {
+        const totalUsers = await Users.countDocuments();
+        const activeUsers = await Users.countDocuments({ isActive: true });
+        const blockedUsers = await Users.countDocuments({ isBlocked: true });
+
+        res.json({
+            totalUsers,
+            activeUsers,
+            blockedUsers,
+        });
+    } catch (error) {
+        console.error("Error fetching user stats:", error);
+        res.status(500).json({ message: "Server error" });
+    }
+};
+
 export const updateUserStatus = async (req, res, next) => {
     try {
         const userId = req.params.id;
@@ -1200,7 +1442,7 @@ export const updateUserStatus = async (req, res, next) => {
         }
 
         // Update user status
-        await Users.findByIdAndUpdate(userId, { isActive: status, updatedAt: new Date() }).exec();
+        await Users.findByIdAndUpdate(userId, { isActive: status, isActiveDate: new Date() }).exec();
         res.status(201).json({ message: "User Active Status Updated Successfully", success: true });
 
         // Send notification based on user status
@@ -1242,26 +1484,40 @@ export const updateUserKycStatus = async (req, res, next) => {
     try {
         const userId = req.params.id;
         const { kycStatus } = req.body;
+
+        // Find the user
         const userObj = await Users.findById(userId).exec();
         if (!userObj) {
             return res.status(404).json({ message: "User not found", success: false });
         }
-        await Users.findByIdAndUpdate(userId, { kycStatus: kycStatus }).exec();
-        res.status(201).json({ message: "User KYC Status Updated Successfully", success: true });
-        next();
+
+        // Prepare update object
+        let updateData = { kycStatus };
+
+        // If KYC is approved, set isActive to true and update isActiveDate
+        if (kycStatus === "approved") {
+            updateData.isActive = true;
+            updateData.isActiveDate = new Date();
+        }
+
+        // Update the user with new KYC status (and isActive if applicable)
+        await Users.findByIdAndUpdate(userId, updateData).exec();
+
+        // Send response
+        res.status(200).json({ message: "User KYC Status Updated Successfully", success: true });
+
+        // Send notifications based on KYC status
         if (kycStatus === "approved") {
             const title = "🎉 बधाई हो! आपकी KYC मंज़ूर हो गई!";
             const body = "👏 आपकी KYC मंज़ूर! अब मज़ेदार इनाम पाएं!";
             await sendNotificationMessage(userId, title, body, "kyc");
-
-            next();
-        }
-        if (kycStatus === "rejected") {
+        } else if (kycStatus === "rejected") {
             const title = "🚫 KYC सबमिशन अस्वीकृत";
             const body = "😔 KYC अस्वीकृत! कृपया फिर से सबमिट करें।";
             await sendNotificationMessage(userId, title, body, "kyc");
-            next();
         }
+
+        next();
     } catch (err) {
         console.error(err);
         res.status(500).json({ message: "Internal Server Error", success: false });
@@ -1370,7 +1626,7 @@ export const getUsersAnalytics = async (req, res, next) => {
     }
 };
 
-export const getUserActivityAnalysis = async (req, res, next) => {
+export const getUserActivityAnalysis1 = async (req, res, next) => {
     try {
         const { startDate, endDate } = req.query;
 
@@ -1465,6 +1721,251 @@ export const getUserActivityAnalysis = async (req, res, next) => {
     } catch (error) {
         console.error(error);
         res.status(500).json({ success: false, message: "Failed to fetch users or get counts for the users" });
+    }
+};
+
+// export const getUserActivityAnalysis = async (req, res, next) => {
+//     try {
+//         const { startDate, endDate, search, page = 1, limit = 10, sortField, sortOrder = "desc" } = req.query;
+
+//         // Convert pagination params to numbers
+//         const pageNum = parseInt(page, 10);
+//         const limitNum = parseInt(limit, 10);
+//         const skip = (pageNum - 1) * limitNum;
+
+//         // Parse and validate dates
+//         const startDateParsed = startDate ? new Date(startDate) : new Date(0);
+//         const endDateParsed = endDate ? new Date(endDate) : new Date();
+
+//         if (startDateParsed > endDateParsed) {
+//             return res.status(400).json({ success: false, message: "Start date cannot be greater than end date" });
+//         }
+
+//         // Construct search filter
+//         const searchFilter = search
+//             ? {
+//                   $or: [{ name: { $regex: search, $options: "i" } }, { email: { $regex: search, $options: "i" } }, { phone: { $regex: search, $options: "i" } }],
+//               }
+//             : {};
+
+//         // Find users
+//         const users = await Users.find(
+//             {
+//                 name: { $ne: "Contractor" },
+//                 role: { $ne: "ADMIN" },
+//                 createdAt: { $gte: startDateParsed, $lte: endDateParsed },
+//                 ...searchFilter,
+//             },
+//             { name: 1, phone: 1, role: 1, isOnline: 1, email: 1, createdAt: 1, fcmToken: 1 }
+//         )
+//             .skip(skip)
+//             .limit(limitNum);
+
+//         // Get user IDs and emails
+//         const userIds = users.map((user) => user._id.toString());
+//         const userEmails = users.map((user) => user.email);
+
+//         if (!userIds.length) {
+//             return res.status(200).json({ success: true, data: [], totalPages: 0, currentPage: pageNum });
+//         }
+
+//         const objectIds = userIds.map((id) => new mongoose.Types.ObjectId(id));
+
+//         // Aggregate all user activity data in parallel
+//         const [reelsLikeCounts, contestCounts, couponScans] = await Promise.all([
+//             ReelLikes.aggregate([{ $match: { userId: { $in: userIds } } }, { $group: { _id: "$userId", count: { $sum: 1 } } }]),
+//             UserContest.aggregate([
+//                 { $match: { userId: { $in: objectIds } } },
+//                 {
+//                     $group: {
+//                         _id: "$userId",
+//                         joinCount: { $sum: 1 },
+//                         winCount: { $sum: { $cond: { if: { $eq: ["$status", "win"] }, then: 1, else: 0 } } },
+//                     },
+//                 },
+//             ]),
+//             CouponsModel.aggregate([{ $match: { scannedEmail: { $in: userEmails }, createdAt: { $gte: startDateParsed, $lte: endDateParsed } } }, { $group: { _id: "$scannedEmail", scannedCount: { $sum: 1 } } }]),
+//         ]);
+
+//         // Convert results into maps for quick lookup
+//         const reelsLikeCountMap = new Map(reelsLikeCounts.map((item) => [item._id.toString(), item.count]));
+//         const contestJoinCountMap = new Map(contestCounts.map((item) => [item._id.toString(), item.joinCount]));
+//         const contestWinCountMap = new Map(contestCounts.map((item) => [item._id.toString(), item.winCount]));
+//         const couponScanCountMap = new Map(couponScans.map((item) => [item._id, item.scannedCount]));
+
+//         // Format users with aggregated data
+//         let formattedUsers = users.map((user) => ({
+//             _id: user._id,
+//             phone: user.phone,
+//             name: user.name,
+//             role: user.role,
+//             email: user.email,
+//             isOnline: user.isOnline,
+//             createdAt: user.createdAt,
+//             fcmToken: user.fcmToken,
+//             reelsLikeCount: reelsLikeCountMap.get(user._id.toString()) || 0,
+//             contestJoinCount: contestJoinCountMap.get(user._id.toString()) || 0,
+//             contestWinCount: contestWinCountMap.get(user._id.toString()) || 0,
+//             totalScannedCoupon: couponScanCountMap.get(user.email) || 0,
+//         }));
+
+//         // Apply sorting
+//         if (sortField && ["totalReelsLikeCount", "totalContestJoinCount", "totalScannedCouponCount"].includes(sortField)) {
+//             const fieldMap = {
+//                 totalReelsLikeCount: "reelsLikeCount",
+//                 totalContestJoinCount: "contestJoinCount",
+//                 totalScannedCouponCount: "totalScannedCoupon",
+//             };
+
+//             const sortKey = fieldMap[sortField];
+//             formattedUsers.sort((a, b) => (sortOrder === "asc" ? a[sortKey] - b[sortKey] : b[sortKey] - a[sortKey]));
+//         }
+
+//         // Get total counts for pagination
+//         const totalUsers = await Users.countDocuments({
+//             name: { $ne: "Contractor" },
+//             role: { $ne: "ADMIN" },
+//             createdAt: { $gte: startDateParsed, $lte: endDateParsed },
+//             ...searchFilter,
+//         });
+
+//         const totalPages = Math.ceil(totalUsers / limitNum);
+
+//         res.status(200).json({
+//             success: true,
+//             data: formattedUsers,
+//             pagination: {
+//                 totalUsers,
+//                 totalPages,
+//                 currentPage: pageNum,
+//             },
+//         });
+//     } catch (error) {
+//         console.error(error);
+//         res.status(500).json({ success: false, message: "Failed to fetch user activity analysis" });
+//     }
+// };
+
+export const getUserActivityAnalysis = async (req, res, next) => {
+    try {
+        const { startDate, endDate, search, page = 1, limit = 10, sortField, sortOrder = "desc" } = req.query;
+
+        // Convert pagination params to numbers
+        const pageNum = parseInt(page, 10);
+        const limitNum = parseInt(limit, 10);
+        const skip = (pageNum - 1) * limitNum;
+
+        // Parse and validate dates
+        const startDateParsed = startDate ? new Date(startDate) : new Date(0);
+        const endDateParsed = endDate ? new Date(endDate) : new Date();
+
+        if (startDateParsed > endDateParsed) {
+            return res.status(400).json({ success: false, message: "Start date cannot be greater than end date" });
+        }
+
+        // Construct search filter
+        const searchFilter = search
+            ? {
+                  $or: [{ name: { $regex: search, $options: "i" } }, { email: { $regex: search, $options: "i" } }, { phone: { $regex: search, $options: "i" } }],
+              }
+            : {};
+
+        // Sorting fields mapping
+        const fieldMap = {
+            totalReelsLikeCount: "reelsLikeCount",
+            totalContestJoinCount: "contestJoinCount",
+            totalScannedCouponCount: "totalScannedCoupon",
+        };
+
+        const isSortableField = fieldMap.hasOwnProperty(sortField);
+        const sortCriteria = isSortableField ? {} : { [sortField || "createdAt"]: sortOrder === "asc" ? 1 : -1 };
+
+        // Fetch ALL users first (to ensure correct sorting before pagination)
+        let users = await Users.find(
+            {
+                name: { $ne: "Contractor" },
+                role: { $ne: "ADMIN" },
+                createdAt: { $gte: startDateParsed, $lte: endDateParsed },
+                ...searchFilter,
+            },
+            { name: 1, phone: 1, role: 1, isOnline: 1, email: 1, createdAt: 1, fcmToken: 1 }
+        ).sort(sortCriteria); // Sorting applied BEFORE pagination
+
+        const userIds = users.map((user) => user._id.toString());
+        const userEmails = users.map((user) => user.email);
+
+        if (!userIds.length) {
+            return res.status(200).json({ success: true, data: [], totalPages: 0, currentPage: pageNum });
+        }
+
+        const objectIds = userIds.map((id) => new mongoose.Types.ObjectId(id));
+
+        // Aggregate all user activity data in parallel
+        const [reelsLikeCounts, contestCounts, couponScans] = await Promise.all([
+            ReelLikes.aggregate([{ $match: { userId: { $in: userIds } } }, { $group: { _id: "$userId", count: { $sum: 1 } } }]),
+            UserContest.aggregate([
+                { $match: { userId: { $in: objectIds } } },
+                {
+                    $group: {
+                        _id: "$userId",
+                        joinCount: { $sum: 1 },
+                        winCount: { $sum: { $cond: { if: { $eq: ["$status", "win"] }, then: 1, else: 0 } } },
+                    },
+                },
+            ]),
+            CouponsModel.aggregate([{ $match: { scannedEmail: { $in: userEmails }, createdAt: { $gte: startDateParsed, $lte: endDateParsed } } }, { $group: { _id: "$scannedEmail", scannedCount: { $sum: 1 } } }]),
+        ]);
+
+        // Convert results into maps for quick lookup
+        const reelsLikeCountMap = new Map(reelsLikeCounts.map((item) => [item._id.toString(), item.count]));
+        const contestJoinCountMap = new Map(contestCounts.map((item) => [item._id.toString(), item.joinCount]));
+        const contestWinCountMap = new Map(contestCounts.map((item) => [item._id.toString(), item.winCount]));
+        const couponScanCountMap = new Map(couponScans.map((item) => [item._id, item.scannedCount]));
+
+        // Format users with aggregated data
+        let formattedUsers = users.map((user) => ({
+            _id: user._id,
+            phone: user.phone,
+            name: user.name,
+            role: user.role,
+            email: user.email,
+            isOnline: user.isOnline,
+            createdAt: user.createdAt,
+            fcmToken: user.fcmToken,
+            reelsLikeCount: reelsLikeCountMap.get(user._id.toString()) || 0,
+            contestJoinCount: contestJoinCountMap.get(user._id.toString()) || 0,
+            contestWinCount: contestWinCountMap.get(user._id.toString()) || 0,
+            totalScannedCoupon: couponScanCountMap.get(user.email) || 0,
+        }));
+
+        // Apply sorting on aggregated fields if needed
+        if (isSortableField) {
+            formattedUsers.sort((a, b) => {
+                const aValue = a[fieldMap[sortField]] || 0;
+                const bValue = b[fieldMap[sortField]] || 0;
+                return sortOrder === "asc" ? aValue - bValue : bValue - aValue;
+            });
+        }
+
+        // Apply pagination AFTER sorting
+        const paginatedUsers = formattedUsers.slice(skip, skip + limitNum);
+
+        // Get total count for pagination
+        const totalUsers = users.length;
+        const totalPages = Math.ceil(totalUsers / limitNum);
+
+        res.status(200).json({
+            success: true,
+            data: paginatedUsers,
+            pagination: {
+                totalUsers,
+                totalPages,
+                currentPage: pageNum,
+            },
+        });
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ success: false, message: "Failed to fetch user activity analysis" });
     }
 };
 
@@ -1569,11 +2070,54 @@ export const getContestsWonByUser = async (req, res) => {
     }
 };
 
-export const getUsers = async (req, res, next) => {
+export const getUsersWithOutPagination = async (req, res, next) => {
     try {
         const UsersPipeline = UserList(req.query);
         let UsersArr = await Users.aggregate(UsersPipeline);
         res.status(200).json({ message: "Users", data: UsersArr, success: true });
+    } catch (error) {
+        console.error(error);
+        next(error);
+    }
+};
+
+export const getUsers = async (req, res, next) => {
+    try {
+        const UsersPipeline = UserList(req.query);
+        let UsersArr = await Users.aggregate(UsersPipeline);
+
+        // Get total count
+        const totalCount = await Users.countDocuments(UserList(req.query)[0]["$match"]);
+
+        res.status(200).json({
+            message: "Users",
+            data: UsersArr,
+            total: totalCount,
+            page: parseInt(req.query.page) || 1,
+            limit: parseInt(req.query.limit) || 10,
+            success: true,
+        });
+    } catch (error) {
+        console.error(error);
+        next(error);
+    }
+};
+
+export const getAllUsers = async (req, res, next) => {
+    try {
+        // Define the aggregation pipeline to get only 'name' and 'phone' fields
+        const UsersPipeline = [
+            { $project: { name: 1, phone: 1, role: 1 } }, // Only select 'name' and 'phone' fields
+        ];
+
+        // Execute the aggregation
+        let UsersArr = await Users.aggregate(UsersPipeline);
+
+        res.status(200).json({
+            message: "Users",
+            data: UsersArr,
+            success: true,
+        });
     } catch (error) {
         console.error(error);
         next(error);
@@ -2236,7 +2780,6 @@ export const getUserContestsReportol = async (req, res, next) => {
         const contestId = req.query.contestId;
         const queryType = req.query.q;
         const searchQuery = req.query.f ? req.query.f.trim() : null;
-        console.log("searchQuery", searchQuery, req.query.f);
 
         // Define match condition based on the search query
         const matchCondition = {
@@ -2363,8 +2906,6 @@ export const getUserContestsReportol = async (req, res, next) => {
 };
 
 export const getUserContestsReport = async (req, res, next) => {
-    console.log(req.query);
-
     try {
         if (!req.query.contestId) {
             return res.status(400).json({ message: "contestId query parameter is required" });
@@ -2421,7 +2962,7 @@ export const getUserContestsReport = async (req, res, next) => {
                     rankAsNumber: { $toInt: "$rank" },
                 },
             },
-            // Apply search filter if searchQuery is provided
+
             ...(searchQuery
                 ? [
                       {
@@ -2433,45 +2974,26 @@ export const getUserContestsReport = async (req, res, next) => {
                 : []),
             {
                 $project: {
-                    userIdObject: 0,
-                    contestIdObject: 0,
-                    "userObj._id": 0,
-                    "userObj.bankDetails": 0,
-                    "userObj.createdAt": 0,
-                    "userObj.email": 0,
-                    "userObj.fcmToken": 0,
-                    "userObj.idBackImage": 0,
-                    "userObj.idFrontImage": 0,
-                    "userObj.isActive": 0,
-                    "userObj.isOnline": 0,
-                    "userObj.kycStatus": 0,
-                    "userObj.pincode": 0,
-                    "userObj.points": 0,
-                    "userObj.refCode": 0,
-                    "userObj.referralRewards": 0,
-                    "userObj.referrals": 0,
-                    "userObj.role": 0,
-                    "userObj.selfie": 0,
-                    "userObj._v": 0,
-                    "userObj.uid": 0,
-                    "userObj.updatedAt": 0,
-                    "contestObj._id": 0,
-                    "contestObj.antimationTime": 0,
-                    "contestObj.contestId": 0,
-                    "contestObj.createdAt": 0,
-                    "contestObj.description": 0,
-                    "contestObj.endDate": 0,
-                    "contestObj.endTime": 0,
-                    "contestObj.image": 0,
-                    "contestObj.points": 0,
-                    "contestObj.rulesArr": 0,
-                    "contestObj.startDate": 0,
-                    "contestObj.startTime": 0,
-                    "contestObj.status": 0,
-                    "contestObj.updatedAt": 0,
-                    "contestObj.userJoin": 0,
-                    "contestObj.__v": 0,
-                    "contestObj.subtitle": 0,
+                    contestId: 1,
+                    contestObj: { name: 1 },
+                    createdAt: 1,
+                    rank: 1,
+                    rankAsNumber: 1,
+                    status: 1,
+                    note: 1,
+                    "userObj.phone": 1,
+                    "userObj.name": 1,
+                    userId: 1,
+                    // updatedAt: 1,
+                    // userJoinStatus: 1,
+                    // "userObj.actualAddress": 1,
+                    // "userObj.businessName": 1,
+                    // "userObj.isBlocked": 1,
+                    // "userObj.image": 1,
+                    // "userObj.referralPointsAwarded": 1,
+                    // "userObj.rewardedReferrals": 1,
+                    // "userObj.contractor": 1,
+                    // __v: 1,
                 },
             },
             {
@@ -2498,10 +3020,27 @@ export const getUserContestsReport = async (req, res, next) => {
         const totalPage = Math.ceil(totalCount / limit);
 
         // Respond with the fetched data including page information
+
+        console.log("Data", result);
+
         res.status(200).json({ data: result, page, totalPage, totalUsersJoined: joinedUsersCount });
     } catch (error) {
         console.error(error);
         res.status(500).json({ message: "Internal server error" });
+    }
+};
+
+export const addNoteFieldToUserContests = async (req, res) => {
+    try {
+        const updateResult = await UserContest.updateMany(
+            { note: { $exists: false } }, // Check if the note field doesn't exist
+            { $set: { note: [] } } // Set an empty array as default
+        );
+
+        res.status(200).json({ success: true, message: "Note field added successfully", data: updateResult });
+    } catch (error) {
+        console.error("Error updating user contests:", error);
+        res.status(500).json({ success: false, message: "Internal server error" });
     }
 };
 
@@ -2714,13 +3253,35 @@ export const getUserContests = async (req, res, next) => {
 export const testupdate = async (req, res) => {
     try {
         // Update condition
-        const query = { contestId: "67989e77f580830725e01b17" };
+        const query = { contestId: "67a5d3e19e8fa09f8d8b2ba0" };
 
         // Update operation
         const update = { $set: { rank: "0", status: "join" } };
 
         // Perform the update for all documents matching the query
         const result = await UserContest.updateMany(query, update);
+
+        res.json({ message: "Update successful", result });
+    } catch (error) {
+        console.error("Update error:", error);
+        res.status(500).json({ message: "Internal server error" });
+    }
+};
+
+export const testupdateToBlockWinners = async (req, res) => {
+    try {
+        // Find all users who have won the contest
+        const winners = await UserContest.find({ contestId: "67988f7c04c549a72fa25375", status: "win" });
+
+        // Extract userIds from the winners list
+        const userIds = winners.map((winner) => winner.userId.toString());
+
+        if (userIds.length === 0) {
+            return res.json({ message: "No winners found to update." });
+        }
+
+        // Update isBlocked in the User model for the identified users
+        const result = await Users.updateMany({ _id: { $in: userIds } }, { $set: { isBlocked: true } });
 
         res.json({ message: "Update successful", result });
     } catch (error) {
@@ -2747,7 +3308,7 @@ export const testupdateToMarkLost = async (req, res) => {
     }
 };
 
-export const getPointHistoryByUserId = async (req, res) => {
+export const getPointHistoryByUserIdOld = async (req, res) => {
     try {
         let query = {}; // Initialize an empty query object
 
@@ -2806,6 +3367,84 @@ export const getPointHistoryByUserId = async (req, res) => {
             .exec();
 
         res.json({ data: pointHistoryData, totalPages, success: true, page, totalPages, totalCount, message: "User point history" });
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ error: "Internal server error" });
+    }
+};
+
+export const getPointHistoryByUserId = async (req, res) => {
+    try {
+        let query = {}; // Initialize an empty query object
+
+        // Check if userId query parameter exists
+        if (!req.query.userId) {
+            return res.status(400).json({ message: "userId parameter is required" });
+        }
+        query.userId = req.query.userId; // Add userId to the query
+
+        // Apply filters based on the "s" query parameter
+        if (req.query.s === "ReelsLike") {
+            query.type = "CREDIT";
+            query.description = { $regex: "liking a reel", $options: "i" };
+        } else if (req.query.s === "Contest") {
+            query.type = "DEBIT";
+            query.status = { $nin: ["reject", "pending"] };
+            query.description = { $regex: "Contest Joined", $options: "i" };
+        } else if (req.query.s === "Coupon") {
+            query.type = "CREDIT";
+            query.description = { $regex: "Coupon Earned", $options: "i" };
+        } else if (req.query.s === "Redeem") {
+            query.type = "DEBIT";
+            query.status = { $nin: ["reject", "pending"] };
+        } else if (req.query.s === "Referral") {
+            query.type = "CREDIT";
+            query.description = { $regex: "Referral Reward", $options: "i" };
+        }
+
+        // Date filtering (startDate and endDate)
+        if (req.query.startDate || req.query.endDate) {
+            query.createdAt = {};
+            if (req.query.startDate) {
+                query.createdAt.$gte = new Date(req.query.startDate);
+            }
+            if (req.query.endDate) {
+                query.createdAt.$lte = new Date(req.query.endDate);
+            }
+        }
+
+        // Pagination parameters
+        let page = parseInt(req.query.page) || 1;
+        let pageSize = parseInt(req.query.pageSize) || 10;
+
+        // Find total count of documents matching the query
+        const totalCount = await pointHistoryModel.countDocuments(query);
+
+        // Calculate total pages based on total count and page size
+        const totalPages = Math.ceil(totalCount / pageSize);
+
+        // Sorting logic
+        let sortCondition = { createdAt: -1 }; // Default: sort by newest
+        if (req.query.sortBy === "amount") {
+            sortCondition = { amount: -1 }; // Sort by amount in descending order
+        }
+
+        // Find documents based on the query with pagination and sorting
+        const pointHistoryData = await pointHistoryModel
+            .find(query)
+            .sort(sortCondition) // Apply sorting
+            .skip((page - 1) * pageSize) // Skip documents based on pagination
+            .limit(pageSize) // Limit the number of documents per page
+            .exec();
+
+        res.json({
+            data: pointHistoryData,
+            totalPages,
+            success: true,
+            page,
+            totalCount,
+            message: "User point history",
+        });
     } catch (error) {
         console.error(error);
         res.status(500).json({ error: "Internal server error" });
@@ -3268,7 +3907,97 @@ export const getCaprentersByContractorNameAdmin = async (req, res) => {
 
 export const getAllContractors = async (req, res) => {
     try {
-        const contractors = await Users.find({ role: "CONTRACTOR" }).select("name phone businessName");
+        const contractors = await Users.find({ role: "CONTRACTOR", phone: { $ne: "9876543210" } })
+            .select("name phone businessName points")
+            .sort({ points: -1 });
+        if (contractors.length === 0) {
+            return res.status(404).json({ message: "No contractors found" });
+        }
+
+        res.status(200).json(contractors);
+    } catch (err) {
+        res.status(500).json({ message: "Server error" });
+    }
+};
+
+export const getExcelReportOfUsers = async (req, res) => {
+    try {
+        // Fetch all users
+        const users = await Users.find().populate("referrals").exec();
+
+        // Create an Excel workbook
+        const workbook = new ExcelJS.Workbook();
+        const worksheet = workbook.addWorksheet("Users Report");
+
+        // Define columns for the Excel sheet
+        worksheet.columns = [
+            { header: "Name", key: "name" },
+            { header: "Email", key: "email" },
+            { header: "Phone", key: "phone" },
+            { header: "Points", key: "points" },
+            { header: "Total Reels Likes", key: "totalReelsLikes" },
+            { header: "Total Coupons Scanned", key: "totalCouponsScanned" },
+            { header: "Total Contests Won", key: "totalContestsWon" },
+        ];
+
+        // Prepare the data for each user
+        const userData = [];
+
+        for (const user of users) {
+            // Get total Reels liked by the user from the reelLikes collection
+            const totalReelsLikes = await reelLikesModel.countDocuments({ userId: user._id });
+
+            // Get total Coupons scanned by the user
+            const totalCouponsScanned = await CouponsModel.countDocuments({
+                scannedEmail: user.email, // Assuming scanning is tracked by email
+            });
+
+            // Get total Contests won by the user
+            const totalContestsWon = await userContest.countDocuments({
+                userId: user._id,
+                status: "win", // Assuming status 'win' means the contest is won
+            });
+
+            // Push the data into the userData array
+            userData.push({
+                userId: user.uid,
+                name: user.name,
+                email: user.email,
+                phone: user.phone,
+                points: user.points,
+                totalReelsLikes,
+                totalCouponsScanned,
+                totalContestsWon,
+            });
+        }
+
+        // Add rows to the worksheet
+        userData.forEach((user) => {
+            worksheet.addRow(user);
+        });
+
+        // Set the response headers for downloading the file
+        res.setHeader("Content-Disposition", "attachment; filename=users-report.xlsx");
+        res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+
+        // Write the Excel file to the response
+        await workbook.xlsx.write(res);
+
+        // End the response
+        res.end();
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ message: "An error occurred while generating the report." });
+    }
+};
+
+export const getTop50Contractors = async (req, res) => {
+    try {
+        const contractors = await Users.find({ role: "CONTRACTOR", phone: { $ne: "9876543210" } })
+            .select("name phone businessName points") // Include points field
+            .sort({ points: -1 }) // Sort in descending order
+            .limit(50); // Limit to top 50
+
         if (contractors.length === 0) {
             return res.status(404).json({ message: "No contractors found" });
         }

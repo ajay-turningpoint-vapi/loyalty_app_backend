@@ -9,7 +9,7 @@ let User = mongoose.Schema(
         phone: { type: String, required: true, unique: true },
         name: String,
         businessName: String,
-        actualAddress: { type: String },
+
         contractor: {
             name: String,
             businessName: String,
@@ -26,10 +26,12 @@ let User = mongoose.Schema(
 
         points: { type: Number, default: 100 },
         isActive: { type: Boolean, default: false },
+        isActiveDate: { type: Date, default: null },
         role: {
             type: String,
             default: rolesObj.CARPENTER,
         },
+        isVerified: { type: Boolean, default: false },
 
         image: String,
         idFrontImage: String,
@@ -50,7 +52,7 @@ let User = mongoose.Schema(
         },
         isOnline: { type: Boolean, default: false },
         selfie: String,
-        // visitingCard: { type: String },
+
         fcmToken: { type: String, required: true },
         refCode: { type: String, unique: true },
         isBlocked: {
@@ -70,8 +72,7 @@ let User = mongoose.Schema(
         referralRewards: [{ type: mongoose.Schema.Types.ObjectId, ref: "ReferralRewards" }],
         referralPointsAwarded: { type: Boolean, default: false },
         rewardedReferrals: [{ type: mongoose.Schema.Types.ObjectId, ref: "User" }],
-
-        likedReels: [{ type: mongoose.Schema.Types.ObjectId, ref: "reels" }], // Stores liked reels
+        likedReels: [{ type: mongoose.Schema.Types.ObjectId, ref: "reels" }],
         totalReelViews: { type: Number, default: 0 },
     },
     { timestamps: true }

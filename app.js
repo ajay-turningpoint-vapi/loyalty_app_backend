@@ -44,6 +44,7 @@ import userModel from "./models/user.model";
 import { sendNotificationMessage } from "./middlewares/fcm.middleware";
 import whatsappRoutes from "./routes/whatsapp.routes";
 import { initializeWhatsAppClient } from "./Services/whatsappClient";
+const restrictionRoutes = require("./routes/restrictionRoutes");
 
 const fs = require("fs");
 const app = express();
@@ -94,6 +95,7 @@ app.use("/newContractor", newContractorRouter);
 app.use("/promotions", promotionRoutes);
 app.use("/ticket", ticketRoutes);
 app.use("/notes", noteRoutes);
+app.use("/restrictions", restrictionRoutes);
 app.use("/", fileRouter);
 
 app.get("/backup", async (req, res) => {

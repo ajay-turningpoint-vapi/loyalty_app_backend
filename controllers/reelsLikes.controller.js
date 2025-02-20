@@ -5,7 +5,39 @@ import Reel from "../models/reels.model";
 import User from "../models/user.model";
 import { createPointlogs } from "./pointHistory.controller";
 
-export const likeReels = async (req, res, next) => {
+export const likeReelstest = async (req, res, next) => {
+    try {
+        const { userId, reelId } = req.body;
+
+        // Check if the reel is already liked
+        const existingLike = await ReelLikes.exists({ userId, reelId });
+        if (existingLike) {
+            return res.status(200).json({ message: "Reel already liked", success: false });
+        }
+
+        // Fetch reel and its points
+        const reelObj = await Reel.findById(reelId).select("points").lean();
+        if (!reelObj) {
+            return res.status(404).json({ message: "Reel not found", success: false });
+        }
+
+        const pointsToEarn = parseInt(reelObj.points) || 0;
+        const mobileDescription = "Reel";
+
+        // Perform all DB updates concurrently
+        await Promise.all([
+            createPointlogs(userId, pointsToEarn, pointTransactionType.CREDIT, `Earned ${pointsToEarn} points for liking a reel`, mobileDescription, "success"),
+            User.updateOne({ _id: userId }, { $inc: { points: pointsToEarn } }),
+            ReelLikes.create({ userId, reelId }),
+        ]);
+
+        res.status(200).json({ message: "Liked Reel Successfully", success: true });
+    } catch (err) {
+        next(err);
+    }
+};
+
+export const likeReelsOldWorking = async (req, res, next) => {
     try {
         const { userId, reelId } = req.body;
         const existingLike = await ReelLikes.findOne({ userId, reelId }).exec();
@@ -29,43 +61,58 @@ export const likeReels = async (req, res, next) => {
     }
 };
 
-export const likeReelstest = async (req, res, next) => {
+export const likeReels = async (req, res, next) => {
     try {
         const { userId, reelId } = req.body;
+        console.log(`Received request to like reel. User ID: ${userId}, Reel ID: ${reelId}`);
 
-        // Find the reel and user
-        const reel = await Reel.findById(reelId);
-        const user = await User.findById(userId);
-
-        if (!reel || !user) {
-            return res.status(404).json({ message: "User or Reel not found", success: false });
-        }
-
-        // Check if user already liked the reel
-        const alreadyLiked = reel.likedBy?.get(userId) || false;
-
-        if (!alreadyLiked) {
-            // Like the reel
-            reel?.likedBy.set(userId, true);
-            user?.likedReels.push(reelId);
-
-            // Earn points
-            const pointsToEarn = parseInt(reel.points) || 0;
-            let mobileDescription = "Reel";
-            await createPointlogs(userId, pointsToEarn, pointTransactionType.CREDIT, `Earned ${pointsToEarn} points for liking a reel`, mobileDescription, "success");
-            await User.findByIdAndUpdate(userId, { $inc: { points: pointsToEarn } });
-
-            await reel.save();
-            await user.save();
-
-            return res.status(200).json({ message: "Liked Reel Successfully", success: true });
-        } else {
+        // Check if the user has already liked this reel
+        const existingLike = await ReelLikes.findOne({ userId, reelId }).exec();
+        if (existingLike) {
+            console.log(`User ${userId} has already liked Reel ${reelId}`);
             return res.status(200).json({ message: "Reel already liked", success: false });
         }
+
+        // Fetch the reel details
+        const reelObj = await Reel.findById(reelId).exec();
+        if (!reelObj) {
+            console.error(`Reel with ID ${reelId} not found.`);
+            return res.status(404).json({ message: "Reel not found", success: false });
+        }
+
+        const pointsToEarn = parseInt(reelObj.points);
+        console.log(`Reel found. Points to earn: ${pointsToEarn}`);
+
+        let mobileDescription = "Reel";
+
+        // Add points to user's account
+        await createPointlogs(userId, pointsToEarn, pointTransactionType.CREDIT, `Earned ${pointsToEarn} points for liking a reel`, mobileDescription, "success");
+        console.log(`Point log created for User ${userId}. Earned: ${pointsToEarn} points.`);
+
+        const updatedUser = await User.findByIdAndUpdate(
+            userId,
+            { $inc: { points: pointsToEarn } },
+            { new: true } // Returns the updated document
+        ).exec();
+
+        if (!updatedUser) {
+            console.error(`Failed to update points for User ${userId}`);
+        } else {
+            console.log(`User ${userId} now has ${updatedUser.points} points.`);
+        }
+
+        // Save the like entry in the database
+        await ReelLikes.create({ userId, reelId });
+        console.log(`User ${userId} successfully liked Reel ${reelId}`);
+
+        res.status(200).json({ message: "Liked Reel Successfully", success: true });
+
     } catch (err) {
+        console.error("Error in likeReels:", err);
         next(err);
     }
 };
+
 
 export const getLikeCount = async (req, res, next) => {
     try {

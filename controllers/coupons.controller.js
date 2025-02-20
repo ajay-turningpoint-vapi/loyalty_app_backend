@@ -93,7 +93,7 @@ export const getAllCoupons = async (req, res, next) => {
         let page = req.query.page ? parseInt(req.query.page) : 1; // Default to page 1 if not provided
         let pageSize = req.query.pageSize ? parseInt(req.query.pageSize) : 10; // Default page size to 10 if not provided
 
-        if (req.query.couponUsed && req.query.couponUsed != "All") {
+        if (req.query.couponUsed && req.query.couponUsed !== "All") {
             query.maximumNoOfUsersAllowed = parseInt(req.query.couponUsed);
         }
         if (req.query.productId) {
@@ -107,10 +107,28 @@ export const getAllCoupons = async (req, res, next) => {
             ];
         }
 
+        // Handle startDate and endDate filtering on createdAt
+        if (req.query.startDate || req.query.endDate) {
+            query.createdAt = {};
+            if (req.query.startDate) {
+                query.createdAt.$gte = new Date(req.query.startDate);
+            }
+            if (req.query.endDate) {
+                let endDate = new Date(req.query.endDate);
+                endDate.setHours(23, 59, 59, 999); // Set time to end of the day
+                query.createdAt.$lte = endDate;
+            }
+        }
+
+        // Sorting logic with whitelist
+        const allowedSortFields = ["name", "createdAt", "maximumNoOfUsersAllowed", "value"];
+        let sortBy = req.query.sortBy && allowedSortFields.includes(req.query.sortBy) ? req.query.sortBy : "createdAt";
+        let sortOrder = req.query.sortOrder === "asc" ? 1 : -1; // Default to descending order
+
         let totalCount = await Coupon.countDocuments(query); // Get total count of documents matching query
 
         let couponsArr = await Coupon.find(query)
-            .sort({ createdAt: -1 })
+            .sort({ [sortBy]: sortOrder }) // Dynamic sorting based on allowed fields
             .skip((page - 1) * pageSize) // Skip documents based on pagination
             .limit(pageSize) // Limit the number of documents per page
             .lean()
@@ -129,6 +147,8 @@ export const getAllCoupons = async (req, res, next) => {
             limit: pageSize,
             totalPage: Math.ceil(totalCount / pageSize),
             count: totalCount,
+            sortBy: sortBy, // Return the sorting field in response
+            sortOrder: sortOrder === 1 ? "asc" : "desc",
             success: true,
         });
     } catch (error) {
@@ -136,6 +156,7 @@ export const getAllCoupons = async (req, res, next) => {
         next(error);
     }
 };
+
 export const getAllCouponsAnalyticsold = async (req, res, next) => {
     try {
         let couponsArr = await Coupon.find({}).lean().exec();
@@ -292,7 +313,7 @@ export const getActiveCouponsdummy = async (req, res, next) => {
 
 export const getUsedCouponsforMap = async (req, res, next) => {
     try {
-        const { productName, name } = req.query; // Get search parameters from query string
+        const { productName, name, startDate, endDate } = req.query; // Get search parameters from query string
 
         // Build the query object with the base filter and any search parameters
         const query = {
@@ -307,6 +328,13 @@ export const getUsedCouponsforMap = async (req, res, next) => {
             query.name = { $regex: name, $options: "i" }; // Case-insensitive search
         }
 
+        if (startDate && endDate) {
+            query.updatedAt = {
+                $gte: new Date(startDate), // Greater than or equal to startDate
+                $lte: new Date(endDate), // Less than or equal to endDate
+            };
+        }
+
         // Fetch the coupons based on the dynamic query
         let CouponArr = await Coupon.find(query).lean().exec();
 
@@ -317,7 +345,7 @@ export const getUsedCouponsforMap = async (req, res, next) => {
     }
 };
 
-export const getScannedCouponsByEmail = async (req, res, next) => {
+export const getScannedCouponsByEmailtest = async (req, res, next) => {
     try {
         const { scannedEmail } = req.query; // Get the scannedEmail from query parameters
 
@@ -333,6 +361,49 @@ export const getScannedCouponsByEmail = async (req, res, next) => {
         let scannedCoupons = await Coupon.find(query).lean().exec();
 
         res.status(200).json({ message: "List of scanned coupons", data: scannedCoupons, success: true });
+    } catch (error) {
+        console.error(error);
+        next(error);
+    }
+};
+
+export const getScannedCouponsByEmail = async (req, res, next) => {
+    try {
+        const { scannedEmail, productName } = req.query;
+
+        if (!scannedEmail) {
+            return res.status(400).json({ message: "User Email is required", success: false });
+        }
+
+        // Case-insensitive query for filtering scanned coupons
+        let query = { scannedEmail: { $regex: scannedEmail, $options: "i" } };
+
+        if (productName) {
+            query.productName = { $regex: productName, $options: "i" };
+        }
+
+        // Fetch scanned coupons with the applied filter
+        let scannedCoupons = await Coupon.find(query).lean().exec();
+
+        // Get productTotals without filtering by productName (ensuring all products are counted)
+        const productCounts = await Coupon.aggregate([
+            { $match: { scannedEmail: { $regex: scannedEmail, $options: "i" } } }, // Only filter by email
+            {
+                $group: {
+                    _id: "$productName",
+                    total: { $sum: 1 },
+                },
+            },
+        ]);
+
+        res.status(200).json({
+            message: "List of scanned coupons",
+            data: {
+                scannedCoupons: scannedCoupons, // Filtered results
+                productTotals: productCounts, // Always contains all product totals
+            },
+            success: true,
+        });
     } catch (error) {
         console.error(error);
         next(error);
@@ -740,7 +811,7 @@ export const applyCoupon = async (req, res, next) => {
 // Extracted function to handle points and logs
 const processPoints = async (UserObj, updatedCoupon, points, name, CouponObj) => {
     // Add CouponObj here
-    const pointDescription = `Coupon earned ${points} points by scanning the QR code.`;
+    const pointDescription = `Coupon earned ${points} points by scanning the ${updatedCoupon.productName} QR code.`;
     const mobileDescription = "Coupon";
 
     // Create point logs for the user
@@ -762,7 +833,7 @@ const handleContractorPoints = async (contractorName, points, couponName, Coupon
     // Ensure points are greater than 1 before processing
     if (points > 1) {
         const contractorPoints = Math.floor(points * 0.5);
-        const contractorPointDescription = `Earned ${contractorPoints} points (50% of coupon points) from ${couponName}`;
+        const contractorPointDescription = `Earned ${contractorPoints} points (50% of coupon points) from ${couponName} ${CouponObj.productName}`;
 
         const ContractorObj = await Users.findOne({ name: contractorName, role: "CONTRACTOR" }).exec();
 

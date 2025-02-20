@@ -36,6 +36,50 @@ export const getPointHistoryCount = async (req, res) => {
     }
 };
 
+export const redeemUserPointsAgainstProduct = async (req, res) => {
+    try {
+        const { userId, pointsToDeduct, reason } = req.body;
+
+        // Validate request data
+        if (!userId || !pointsToDeduct || pointsToDeduct <= 0 || !reason) {
+            return res.status(400).json({ message: "Invalid userId, pointsToDeduct, or reason." });
+        }
+
+        // Find user
+        const user = await Users.findById(userId);
+        if (!user) {
+            return res.status(404).json({ message: "User not found." });
+        }
+
+        // Check if user has enough points
+        if (user.points < pointsToDeduct) {
+            return res.status(400).json({ message: "Insufficient points." });
+        }
+
+        // Deduct points
+        user.points -= pointsToDeduct;
+        await user.save();
+
+        // Log transaction with reason
+        await createPointlogs(
+            userId,
+            -pointsToDeduct, // Negative value to indicate deduction
+            "DEBIT", // Transaction type
+            `${pointsToDeduct} points deducted for ${reason}`, // Reason provided in the request
+            `Product`, // Mobile-friendly reason
+            "completed"
+        );
+
+        res.status(200).json({
+            message: `Successfully deducted ${pointsToDeduct} points for: ${reason}`,
+            remainingPoints: user.points,
+        });
+    } catch (error) {
+        console.error("Error reducing user points:", error);
+        res.status(500).json({ message: "Internal server error." });
+    }
+};
+
 export const getPointHistory = async (req, res, next) => {
     try {
         let limit = 0;

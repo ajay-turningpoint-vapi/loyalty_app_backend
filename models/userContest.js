@@ -11,13 +11,19 @@ let userContest = mongoose.Schema(
             type: Boolean,
             default: false,
         },
-        note: [{
-            text: { type: String }, 
-            image: { type: String }, 
-        }],
+        note: [
+            {
+                text: { type: String },
+                image: { type: String },
+            },
+        ],
     },
 
     { timestamps: true }
 );
+
+userContest.index({ contestId: 1, userId: 1 });
+userContest.index({ userId: 1 });
+userContest.index({contestId: 1 });
 
 export default mongoose.model("userContest", userContest);

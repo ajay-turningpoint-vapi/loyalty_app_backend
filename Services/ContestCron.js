@@ -15,7 +15,6 @@ const postContestUpdates = async (contestId, validContestUsers) => {
 
         // Update contest status to "CLOSED"
         const response = await Contest.findByIdAndUpdate(contestId, { status: "CLOSED" }).exec();
-        console.log("Contest Closed response", response);
 
         // Step 1: Prepare the notification message
     } catch (error) {
@@ -24,14 +23,11 @@ const postContestUpdates = async (contestId, validContestUsers) => {
 };
 
 export const checkContest = async (date, time) => {
-    console.log("Checking contests for date and time:", date, time);
     try {
         const startDate = new Date(date);
         startDate.setHours(0, 0, 0, 0); // Start of the day
         const endDate = new Date(date);
         endDate.setHours(23, 59, 59, 999); // End of the day
-
-        console.log("endDate from check contest", endDate);
 
         const openContests = await Contest.find({
             endTime: time, // Match the endTime with the formatted time
@@ -46,13 +42,10 @@ export const checkContest = async (date, time) => {
             return;
         }
 
-        console.log("List of contests:", openContests);
-
         for (const contest of openContests) {
             const updatedContest = await Contest.findOneAndUpdate({ _id: contest._id, status: "APPROVED" }, { $set: { status: "PROCESSING" } }, { new: true }).exec();
 
             if (!updatedContest) {
-                console.log(`Contest ${contest._id} is already being processed by another instance.`);
                 continue;
             }
 
@@ -103,7 +96,6 @@ export const checkContest = async (date, time) => {
                     }
 
                     if (!randomUser) {
-                        console.log("No valid user available for prize allocation.");
                         break;
                     }
                 }
@@ -130,16 +122,12 @@ export const checkContest = async (date, time) => {
                 postContestUpdates(contest._id, validContestUsers);
             }, 2000);
         }
-
-        console.log("Contest check completed successfully:", startDate.getTime(), time);
     } catch (error) {
         console.error("Error processing contest:", error);
     }
 };
 
 export const checkContestWinners = async (date, time) => {
-    console.log("Checking contests for date and animation time:", date, time);
-
     try {
         // Define start and end of the day
         const startDate = new Date(date);
@@ -155,11 +143,8 @@ export const checkContestWinners = async (date, time) => {
         }).exec();
 
         if (!openContests.length) {
-            console.log("No contests found for the given animation time and date.");
             return [];
         }
-
-        console.log("List of contests:", openContests);
 
         for (const contest of openContests) {
             const contestId = contest._id;
@@ -174,7 +159,6 @@ export const checkContestWinners = async (date, time) => {
             winners.sort((a, b) => Number(a.rank) - Number(b.rank));
 
             if (!winners.length) {
-                console.log(`No winners found for contest: ${contestName}`);
                 continue;
             }
 
@@ -182,7 +166,6 @@ export const checkContestWinners = async (date, time) => {
             const prizes = await Prize.find({ contestId }).sort({ rank: 1 }).lean();
 
             if (!prizes.length) {
-                console.log(`No prizes found for contest: ${contestName}`);
                 continue;
             }
 
@@ -209,13 +192,10 @@ export const checkContestWinners = async (date, time) => {
             // Send notifications to all users
             try {
                 await sendNotificationMessageToAllUsers(message);
-                console.log(`Notification sent successfully for contest: ${contestName}`);
             } catch (error) {
                 console.error(`Failed to send notifications for contest: ${contestName} - ${error.message}`);
             }
         }
-
-        console.log("All contests processed successfully.");
     } catch (error) {
         console.error("Error in checkContestWinners:", error);
         throw error;
@@ -236,7 +216,6 @@ const sendNotificationMessageToAllUsers = async (message) => {
             const response = await client.sendMessage(formattedNumber, message);
 
             if (response && response.success) {
-                console.log("Message sent successfully");
             } else {
                 console.error("Failed to send message:", response.error || response.message);
             }
@@ -255,7 +234,6 @@ const isClientReady = async () => {
             return false;
         }
     } catch (error) {
-        console.error("Error checking client readiness:", error);
         return false;
     }
 };

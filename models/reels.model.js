@@ -11,8 +11,8 @@ let reels = mongoose.Schema(
         link: { name: String },
         isLiked: { type: Boolean, default: false },
         type: { type: String, require: true },
-        description: { type: String },
-        likedBy: { type: Map, of: Boolean, default: {} },
+        // description: { type: String },
+        // likedBy: { type: Map, of: Boolean, default: {} },
         likeCount: { type: Number, default: 0 },
     },
     { timestamps: true }

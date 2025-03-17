@@ -4,7 +4,7 @@ import { storeFileAndReturnNameBase64 } from "../helpers/fileSystem";
 import Category from "../models/category.model";
 import Inventory from "../models/inventory.model";
 import Product from "../models/product.model";
-
+import Coupons from "../models/Coupons.model";
 export const addProduct = async (req, res, next) => {
     try {
         let insertObj = {
@@ -60,7 +60,7 @@ export const deleteProductById = async (req, res, next) => {
     }
 };
 
-export const updateProductById = async (req, res, next) => {
+export const updateProductByIdOld = async (req, res, next) => {
     try {
         let insertObj = {
             ...req.body,
@@ -85,6 +85,33 @@ export const updateProductById = async (req, res, next) => {
         // await new StockLogs({}).save()
 
         res.status(200).json({ message: "product Updated", success: true });
+    } catch (err) {
+        console.error(err);
+        next(err);
+    }
+};
+
+export const updateProductById = async (req, res, next) => {
+    try {
+        const productId = req.params.id;
+        const updatedData = req.body;
+
+        // Find the existing product
+        const existingProduct = await Product.findById(productId);
+        if (!existingProduct) {
+            return res.status(404).json({ message: "Product not found", success: false });
+        }
+
+        // Check if the name has changed
+        if (updatedData.name && updatedData.name !== existingProduct.name) {
+            // Update all related Coupons' productName field
+            await Coupons.updateMany({ productId: productId }, { $set: { productName: updatedData.name } });
+        }
+
+        // Update the product
+        await Product.findByIdAndUpdate(productId, updatedData);
+
+        res.status(200).json({ message: "Product Updated", success: true });
     } catch (err) {
         console.error(err);
         next(err);

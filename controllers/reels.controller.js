@@ -2,6 +2,7 @@ import { storeFileAndReturnNameBase64 } from "../helpers/fileSystem";
 import Reels from "../models/reels.model";
 import ReelLikes from "../models/reelLikes.model";
 import ActivityLog from "../models/activityLogs.model";
+import mongoose from "mongoose";
 const AWS = require("aws-sdk");
 
 export const addReels = async (req, res, next) => {
@@ -17,7 +18,7 @@ export const addReels = async (req, res, next) => {
                 el.fileUrl = fileUrls[index];
             }
         });
-        console.log(req.body);
+        
         await Reels.insertMany(req.body);
 
         res.status(200).json({ message: "Reel Successfully Created", success: true });
@@ -345,9 +346,7 @@ export const getReelsPaginatedworkingAWS = async (req, res, next) => {
     }
 };
 
-
-
-export const getReelsPaginated = async (req, res, next) => {
+export const getReelsPaginated3x = async (req, res, next) => {
     try {
         if (!req.user) {
             return res.status(401).json({ message: "Unauthorized" });
@@ -359,7 +358,7 @@ export const getReelsPaginated = async (req, res, next) => {
         // Step 1: Get a small random batch (2x limit for better randomness)
         const randomReels = await Reels.aggregate([
             { $sample: { size: limit * 3 } }, // Get 2x limit for better randomness
-            { $limit: limit } // Pick exact limit
+            { $limit: limit }, // Pick exact limit
         ]);
 
         if (!randomReels.length) {
@@ -388,13 +387,71 @@ export const getReelsPaginated = async (req, res, next) => {
             limit,
             success: true,
         });
-
     } catch (err) {
         next(err);
     }
 };
 
+export const getReelsPaginated = async (req, res, next) => {
+    try {
+        if (!req.user) {
+            return res.status(401).json({ message: "Unauthorized" });
+        }
 
+        const limit = Math.max(parseInt(req.query.limit) || 10, 1);
+        const userId = req.user.userId;
+
+        // Fetch liked reels and store in a Set for fast lookup
+        const likedReelsArray = await ReelLikes.find({ userId }).distinct("reelId");
+        const likedReelsObjectIds = likedReelsArray.map((id) => new mongoose.Types.ObjectId(id));
+
+        const likedReelsSet = new Set(likedReelsArray);
+
+
+        // Fetch random unliked reels
+        let reelsArr = await Reels.aggregate([
+            { $match: { _id: { $nin: likedReelsObjectIds } } }, // Exclude liked reels
+            { $sample: { size: limit } }, // Fetch `limit` random reels
+        ]);
+
+        // If not enough unliked reels, fetch liked reels as fallback
+        if (reelsArr.length < limit && likedReelsArray.length > 0) {
+            const remaining = limit - reelsArr.length;
+            const likedFallbackReels = await Reels.aggregate([
+                { $match: { _id: { $in: likedReelsArray } } }, // Fetch liked reels
+                { $sample: { size: remaining } }, // Get remaining needed reels
+            ]);
+
+            // Mark fallback liked reels correctly
+            likedFallbackReels.forEach((reel) => {
+                reel.likedByCurrentUser = true;
+            });
+
+            // Merge both unliked and liked reels
+            reelsArr = [...reelsArr, ...likedFallbackReels];
+        }
+
+        // Assign likedByCurrentUser flag for unliked reels (default false)
+        const reelsWithLikedStatus = reelsArr.map((reel) => ({
+            ...reel,
+            likedByCurrentUser: likedReelsSet.has(reel._id.toString()),
+        }));
+
+        // Async activity logging (does not block response)
+        ActivityLog.create({ userId, type: "Watching Reels" }).catch((err) => console.error("Activity log error:", err));
+
+        res.status(200).json({
+            message: "Reels Found",
+            data: reelsWithLikedStatus,
+            success: true,
+            limit,
+            hasMore: reelsArr.length === limit, // Check if more reels are available
+        });
+    } catch (err) {
+        console.error("Error in getReelsPaginated:", err);
+        next(err);
+    }
+};
 
 export const getReelsPaginatedCategorytest = async (req, res, next) => {
     try {

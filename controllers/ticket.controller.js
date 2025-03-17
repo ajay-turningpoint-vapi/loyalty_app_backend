@@ -23,7 +23,7 @@ exports.createTicket = async (req, res) => {
 // Get all tickets
 exports.getTickets = async (req, res) => {
     try {
-        console.log(req.user);
+     
 
         const { role, name } = req.user; // Assuming the user role and userName are attached to the request after authentication
 

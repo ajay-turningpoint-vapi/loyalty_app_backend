@@ -30,7 +30,7 @@ const initializeRestrictions = async () => {
     });
 
     await restriction.save();
-    console.log("Restrictions initialized!");
+   
 };
 
 module.exports = { initializeRestrictions, getRestrictions, createOrUpdateRestrictions };

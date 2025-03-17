@@ -6,7 +6,7 @@ const { query } = require("express");
 exports.sendNotification = async (req, res) => {
     const { title, message, imageUrl, role } = req.body;
 
-    console.log("req.body", req.body);
+
 
     if (!title || !message || !imageUrl) {
         return res.status(400).json({ error: "All fields are required" });
@@ -64,7 +64,7 @@ exports.sendNotification = async (req, res) => {
 
 // CREATE: Send a new promotion
 exports.createPromotion = async (req, res) => {
-    console.log("req.body", req.body);
+  
 
     const { title, message, imageUrl } = req.body;
 

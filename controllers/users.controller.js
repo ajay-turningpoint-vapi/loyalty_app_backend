@@ -1,4 +1,5 @@
 import { UserList } from "../Builders/user.builder";
+import { broadcastMessage } from "../bin/www";
 import { comparePassword, encryptPassword } from "../helpers/Bcrypt";
 import { ErrorMessages, pointTransactionType, rolesObj } from "../helpers/Constants";
 import { storeFileAndReturnNameBase64 } from "../helpers/fileSystem";
@@ -32,6 +33,7 @@ import ReelsModel from "../models/reels.model";
 import "dotenv/config";
 import userContest from "../models/userContest";
 import reelLikesModel from "../models/reelLikes.model";
+import userModel from "../models/user.model";
 const geolib = require("geolib");
 const AWS = require("aws-sdk");
 
@@ -60,9 +62,7 @@ export const phoneOtpgenerate = async (req, res) => {
         sendWhatsAppMessageForOTP(`91${phone}`, otp);
 
         res.status(200).json({ message: "OTP sent to phone number" });
-    } catch (err) {
-        console.log(`ERROR : ${err}`);
-    }
+    } catch (err) {}
 };
 
 export const verifyOtp = async (req, res) => {
@@ -77,11 +77,8 @@ export const verifyOtp = async (req, res) => {
         return res.status(200).json({ message: "Dummy OTP verified successfully" });
     }
 
-    console.log(req.body);
-
     // Find OTP entry
     const otpEntry = await otpModel.findOne({ phone, otp });
-    console.log(otpEntry);
 
     if (!otpEntry) {
         return res.status(400).json({ message: "Invalid OTP" });
@@ -103,8 +100,6 @@ export const verifyOtp = async (req, res) => {
 export const googleLoginOptimizedoLD = async (req, res) => {
     const { idToken, fcmToken } = req.body;
 
-    console.log(`[Login] Received Google login request. ID Token: ${idToken ? "Present" : "Missing"}, FCM Token: ${fcmToken || "Not provided"}`);
-
     if (!idToken) {
         console.warn("[Login] ID token is missing. Returning error.");
         return res.status(400).json({ message: "ID token is required", status: false });
@@ -113,19 +108,14 @@ export const googleLoginOptimizedoLD = async (req, res) => {
     try {
         // Verify Google ID Token
         const { uid } = await admin.auth().verifyIdToken(idToken);
-        console.log(`[Login] Google ID Token verified. UID: ${uid}`);
 
         const existingUser = await Users.findOne({ uid }).exec();
 
         if (!existingUser) {
-            console.warn(`[Login] User not found in database. UID: ${uid}`);
             return res.status(200).json({ message: "User not registered", status: false });
         }
 
-        console.log(`[Login] User found. ID: ${existingUser._id}, Email: ${existingUser.email}`);
-
         const previousFcmToken = existingUser.fcmToken;
-        console.log(`[Login] Previous FCM Token: ${previousFcmToken || "None"}`);
 
         // Handle missing or outdated FCM token
         if (!fcmToken || fcmToken.length < 10) {
@@ -448,8 +438,10 @@ export const registerUserWorking = async (req, res, next) => {
 
         if (role === "CARPENTER" && req.body.contractor.phone !== null && req.body.contractor.phone !== "") {
             userData.notListedContractor = { name: req.body?.contractor?.name, phone: req.body?.contractor?.phone };
-            userData.contractor = { name: "Contractor", businessName: businessName || "Turning Point" };
+            // userData.contractor = { name: "Contractor", businessName: businessName || "Turning Point"  };
+            userData.contractor = { name: req.body.contractor.name, businessName: req.body.contractor.businessName || "Turning Point", phone: req.body.contractor.phone };
         }
+
         newUser = await new Users(userData).save();
         if (referrer) {
             referrer.referrals.push(newUser._id);
@@ -494,115 +486,6 @@ export const registerUserWorking = async (req, res, next) => {
         const registrationBody = `🎉 Turning Point में आपका स्वागत है!`;
         await sendNotificationMessage(newUser._id, registrationTitle, registrationBody, "New User");
         // sendWhatsAppMessage("newuser", "918975944936", newUser.name, newUser.phone, newUser.email);
-        res.status(200).json({ message: "User Created", data: newUser, token: accessToken, status: true });
-    } catch (error) {
-        console.error("register user", error);
-        next(error);
-    }
-};
-
-export const registerUserlatest = async (req, res, next) => {
-    try {
-        const { phone, role, idToken, fcmToken, refCode, businessName } = req.body;
-
-        const userExistCheck = await Users.findOne({ $or: [{ phone }, { email: new RegExp(`^${req.body.email}$`, "i") }] });
-        if (userExistCheck) {
-            throw new Error(`${ErrorMessages.EMAIL_EXISTS}`);
-        }
-        const decodedToken = await admin.auth().verifyIdToken(idToken);
-        const { uid, name, email, picture } = decodedToken;
-
-        let referrer, newUser;
-
-        if (refCode) {
-            referrer = await Users.findOne({ refCode });
-        }
-
-        if (role === "CONTRACTOR") {
-            const carpenter = await Users.findOne({ "notListedContractor.phone": phone, role: "CARPENTER" });
-            if (carpenter) {
-                carpenter.contractor.businessName = businessName || "Turning Point";
-                carpenter.contractor.name = name;
-                await carpenter.save();
-            }
-        }
-
-        const randomWord = generateRandomWord(6);
-        const points = refCode ? 500 : 100;
-        const userData = {
-            ...req.body,
-            refCode: role === "CONTRACTOR" ? randomWord : generateRandomWord(6), // Random referral code only for contractors
-            uid,
-            name,
-            email,
-            image: picture,
-            fcmToken,
-            points,
-        };
-
-        if (role === "CARPENTER" && req.body.contractor.phone !== null && req.body.contractor.phone !== "") {
-            userData.notListedContractor = { name: req.body?.contractor?.name, phone: req.body?.contractor?.phone };
-            userData.contractor = { name: "Contractor", businessName: businessName || "Turning Point" };
-        }
-        newUser = await new Users(userData).save();
-
-        await createPointlogs(
-            newUser._id,
-            points,
-            pointTransactionType.CREDIT,
-            refCode ? `${points} points for using referral code ${refCode}` : `${newUser.name} New Registration Bonous ${points}`, // Dynamic description
-            refCode ? "Referral" : "Registration",
-            "success"
-        );
-
-        if (referrer) {
-            referrer.referrals.push(newUser._id);
-            await referrer.save();
-
-            const rewardValue = randomNumberGenerator();
-            const reward = await ReferralRewards.create({
-                userId: referrer._id,
-                name: "referral_reward",
-                value: rewardValue,
-                maximumNoOfUsersAllowed: 1,
-            });
-
-            referrer.referralRewards.push(reward._id);
-            await referrer.save();
-
-            try {
-                const title = "🎉आपको रिफरल स्क्रैच कार्ड मिला है!";
-                const body = "🏆अपना इनाम देखने के लिए स्क्रैच करें!";
-                await sendNotificationMessage(referrer._id, title, body, "referral");
-            } catch (error) {
-                console.error("Error sending notification for user:", referrer._id);
-            }
-        }
-
-        const accessToken = await generateAccessJwt({
-            userId: newUser?._id,
-            phone: newUser?.phone,
-            email: newUser?.email,
-            name: newUser?.name,
-            uid: newUser?.uid,
-            fcmToken: newUser?.fcmToken,
-        });
-
-        const refreshToken = await generateRefreshJwt({
-            userId: newUser?._id,
-            phone: newUser?.phone,
-            email: newUser?.email,
-            uid: newUser?.uid,
-            name: newUser?.name,
-            fcmToken: newUser?.fcmToken,
-        });
-
-        await Token.create({ uid: newUser.uid, userId: newUser._id, token: accessToken, refreshToken, fcmToken: newUser?.fcmToken });
-
-        const registrationTitle = `👏 बधाई हो, ${newUser?.name}! 🎉`;
-        const registrationBody = `🎉 Turning Point में आपका स्वागत है!`;
-        await sendNotificationMessage(newUser._id, registrationTitle, registrationBody, "New User");
-
         res.status(200).json({ message: "User Created", data: newUser, token: accessToken, status: true });
     } catch (error) {
         console.error("register user", error);
@@ -656,9 +539,27 @@ export const registerUser = async (req, res, next) => {
         };
 
         // Handle contractor data for CARPENTER role
-        if (role === "CARPENTER" && req.body.contractor.phone) {
-            userData.notListedContractor = { name: req.body?.contractor?.name, phone: req.body?.contractor?.phone };
-            userData.contractor = { name: "Contractor", businessName: businessName || "Turning Point" };
+        if (role === "CARPENTER" && req.body.contractor?.phone) {
+            // Store the contractor details in notListedContractor
+            userData.notListedContractor = {
+                name: req.body.contractor.name,
+                phone: req.body.contractor.phone,
+            };
+
+            // If contractor name and businessName are also present, assign full details
+            if (req.body.contractor.name && req.body.contractor.businessName) {
+                userData.contractor = {
+                    name: req.body.contractor.name,
+                    businessName: req.body.contractor.businessName,
+                    phone: req.body.contractor.phone,
+                };
+            } else {
+                // Otherwise, set default contractor details
+                userData.contractor = {
+                    name: "Contractor",
+                    businessName: req.body.contractor.businessName || "Turning Point",
+                };
+            }
         }
 
         // Create new user
@@ -711,6 +612,12 @@ export const registerUser = async (req, res, next) => {
         const registrationBody = `🎉 Turning Point में आपका स्वागत है!`;
         await sendNotificationMessage(newUser._id, registrationTitle, registrationBody, "New User");
 
+        broadcastMessage({
+            type: "NEW_USER_REGISTERED",
+            message: `New user registered: ${newUser.name}`,
+            user: newUser,
+        });
+
         // Respond with success
         res.status(200).json({ message: "User Created", data: newUser, token: accessToken, status: true });
     } catch (error) {
@@ -737,6 +644,39 @@ export const blockUser = async (req, res, next) => {
         });
     } catch (error) {
         console.error("Error toggling block status:", error);
+        res.status(500).json({ message: "Internal server error." });
+    }
+};
+
+export const updateWinnersBlockStatus = async (req, res) => {
+    try {
+        const { contestId, isBlocked } = req.body;
+
+        if (!contestId || typeof isBlocked !== "boolean") {
+            return res.status(400).json({ message: "Contest ID and isBlocked value (true/false) are required." });
+        }
+
+        // Find all users who have won in the contest
+        const usersToUpdate = await userContest.find({ contestId, status: "win" }).select("userId");
+
+        if (!usersToUpdate.length) {
+            return res.status(404).json({ message: "No winners found for this contest." });
+        }
+
+        const userIds = usersToUpdate.map((user) => user.userId); // Extract user IDs
+
+        // Update `isBlocked` for these users in the Users collection
+        const updatedUsers = await Users.updateMany(
+            { _id: { $in: userIds } }, // Filter users by IDs
+            { $set: { isBlocked: isBlocked } } // Explicitly set `isBlocked`
+        );
+
+        res.status(200).json({
+            message: `All winning users are now ${isBlocked ? "blocked" : "unblocked"}.`,
+            modifiedCount: updatedUsers.modifiedCount,
+        });
+    } catch (error) {
+        console.error("Error updating block status:", error);
         res.status(500).json({ message: "Internal server error." });
     }
 };
@@ -998,7 +938,6 @@ export const checkRefCode = async (req, res, next) => {
 
 export const login = async (req, res, next) => {
     try {
-        console.log(req.body);
         // const userObj = await Users.findOne({ phone: req.body.phone }).lean().exec();
         const userObj = await Users.findOne({ $or: [{ phone: req.body.phone }, { email: new RegExp(`^${req.body.phone}$`) }] })
             .lean()
@@ -1046,17 +985,16 @@ export const location = async (req, res) => {
         if (!user) {
             return res.status(404).json({ message: "User not found" });
         }
-        console.log("coordinates", coordinates);
+
         user.location.coordinates = coordinates;
         await user.save();
-        console.log(user);
+
         // Find all geofences
         const allGeofences = await Geofence.find({});
         for (const geofence of allGeofences) {
             // Calculate distance between user's coordinates and geofence coordinates
             const distance = calculateDistance(coordinates, geofence.location.coordinates);
             if (distance <= geofence.radius) {
-                console.log(geofence.location);
                 const swappedCoordinates = [geofence.location.coordinates[1], geofence.location.coordinates[0]];
 
                 const usersToNotify = await Users.find({
@@ -1067,7 +1005,6 @@ export const location = async (req, res) => {
                     },
                 });
 
-                console.log("inside", usersToNotify);
                 // for (const user of usersToNotify) {
                 //     const name = "Turning Point";
                 //     await sendNotification(user.fcmToken, name, geofence.notificationMessage);
@@ -1230,7 +1167,6 @@ export const updateUserProfileAdminOld = async (req, res, next) => {
 export const updateUserProfileAdmin = async (req, res, next) => {
     try {
         const { userId, isBlocked, isActive, kycStatus, businessName, ...updateFields } = req.body;
-        console.log("updateFields", updateFields, businessName);
 
         if (!userId) {
             return res.status(400).json({ message: "User ID is required", success: false });
@@ -1247,11 +1183,8 @@ export const updateUserProfileAdmin = async (req, res, next) => {
         if (businessName && businessName !== userObj.businessName) {
             const previousBusinessName = userObj.businessName;
 
-            //     // Update businessName in all users where contractor.businessName matches the old value
-            //     await Users.updateMany(
-            //         { "contractor.businessName": previousBusinessName },
-            //         { $set: { "contractor.businessName": businessName } }
-            //     );
+            // Update businessName in all users where contractor.businessName matches the old value
+            await Users.updateMany({ "contractor.businessName": previousBusinessName }, { $set: { "contractor.businessName": businessName } });
 
             updateData.businessName = businessName;
         }
@@ -1296,6 +1229,8 @@ export const updateUserProfileAdmin = async (req, res, next) => {
 
                 await sendNotificationMessage(userId, "🎉 बधाई हो! आपकी KYC मंज़ूर हो गई!", "👏 आपकी KYC मंज़ूर! अब मज़ेदार इनाम पाएं!", "kyc");
             } else if (kycStatus === "rejected") {
+                updateData.isBlocked = true;
+                updateData.isActive = false;
                 await sendNotificationMessage(userId, "🚫 KYC सबमिशन अस्वीकृत", "😔 KYC अस्वीकृत! कृपया फिर से सबमिट करें।", "kyc");
             }
         }
@@ -1310,7 +1245,6 @@ export const updateUserProfileAdmin = async (req, res, next) => {
 };
 
 export const updateUserProfileImage = async (req, res, next) => {
-    console.log("profile", req.body);
     try {
         let userObj = await Users.findById(req.user.userId).exec();
         if (!userObj) {
@@ -1359,8 +1293,6 @@ export const updateUserStatusReferredBy = async (req, res, next) => {
         const { status } = req.body;
         let userObj = await Users.findById(userId).exec();
 
-        console.log("userObj", userObj);
-
         if (!userObj) {
             throw new Error("User Not found");
         }
@@ -1382,7 +1314,6 @@ export const updateUserStatusReferredBy = async (req, res, next) => {
             // Check if the user has a referrer (referredBy)
             if (userObj.referredBy) {
                 const referrer = await Users.findById(userObj.referredBy).exec();
-                console.log("referrer", referrer);
 
                 if (referrer && referrer.isActive) {
                     // Award 1000 points to the referrer
@@ -1434,8 +1365,6 @@ export const updateUserStatus = async (req, res, next) => {
         const userId = req.params.id;
         const { status } = req.body;
         let userObj = await Users.findById(userId).exec();
-
-        console.log("userObj", userObj);
 
         if (!userObj) {
             throw new Error("User Not found");
@@ -1568,8 +1497,6 @@ export const updateUserOnlineStatus = async (req, res) => {
         if (typeof isOnline !== "boolean") {
             return res.status(400).json({ error: "Invalid input, 'isOnline' must be a boolean" });
         }
-
-        console.log(`Updating online status for user ${userId} to ${isOnline}`);
 
         const updatedUser = await updateUserOnlineStatusWithRetry(userId, isOnline);
 
@@ -2156,17 +2083,24 @@ export const getContractors = async (req, res, next) => {
 export const getCounts = async (req, res) => {
     try {
         const counts = await Promise.all([Users.countDocuments(), CouponsModel.countDocuments(), pointHistoryModel.countDocuments(), ProductModel.countDocuments(), ReelsModel.countDocuments(), Contest.countDocuments()]);
+        const responseData = {
+            userCount: counts[0],
+            couponsCount: counts[1],
+            pointHistoryCount: counts[2],
+            productCount: counts[3],
+            reelsCount: counts[4],
+            contestCount: counts[5],
+        };
+
+        broadcastMessage({
+            type: "UPDATE_COUNTS",
+            message: "Updated counts",
+            data: responseData,
+        });
 
         return res.status(200).json({
             success: true,
-            data: {
-                userCount: counts[0],
-                couponsCount: counts[1],
-                pointHistoryCount: counts[2],
-                productCount: counts[3],
-                reelsCount: counts[4],
-                contestCount: counts[5],
-            },
+            data: responseData,
         });
     } catch (error) {
         console.error("Error fetching counts:", error);
@@ -2195,8 +2129,6 @@ export const getUserByIdwithDateCheck = async (req, res, next) => {
         userObj.contestUniqueWonCount = contestUniqueWonCount?.length ? contestUniqueWonCount?.length : 0;
 
         if (userObj.points >= 100) {
-            console.log("Contest block initiated.");
-
             // Get the current date and time
             const currentDateTime = new Date();
 
@@ -2233,29 +2165,22 @@ export const getUserByIdwithDateCheck = async (req, res, next) => {
                     },
                 }).exec();
 
-                console.log("Open contests found:", openContests.length);
-
                 // Check if any open contest is found
                 if (openContests.length > 0) {
                     const contestId = openContests[0]._id;
-
-                    console.log("Joining contest with ID:", contestId);
 
                     // Fetch the contest object by ID
                     const contestObj = await Contest.findById(contestId).exec();
 
                     if (!contestObj) {
                         userObj.autoJoinStatus = "Contest not found";
-                        console.log(userObj.autoJoinStatus);
                     } else {
                         // Auto-join the contest
                         await autoJoinContest(contestId, userObj._id);
                         userObj.autoJoinStatus = "User auto-joined the contest";
-                        console.log(userObj.autoJoinStatus);
                     }
                 } else {
                     userObj.autoJoinStatus = "No open contests found for this time";
-                    console.log(userObj.autoJoinStatus);
                 }
             } catch (error) {
                 userObj.autoJoinStatus = "Auto-join failed: " + error.message;
@@ -2286,7 +2211,6 @@ export const getUserByIdOld = async (req, res, next) => {
         userObj.contestWonCount = contestWonCount;
         userObj.contestUniqueWonCount = contestUniqueWonCount?.length ? contestUniqueWonCount?.length : 0;
 
-        console.log("userObj", userObj.isActive);
         if (userObj.isActive) {
             if (req.query.contestId && req.query.contestId !== "null") {
                 const contestId = req.query.contestId;
@@ -2326,7 +2250,6 @@ export const getUserByIdOld = async (req, res, next) => {
                 }
             } else {
                 userObj.autoJoinStatus = "No contest ID provided";
-                console.log(userObj.autoJoinStatus);
             }
         }
 
@@ -2356,8 +2279,6 @@ export const getUserById = async (req, res, next) => {
         userObj.contestWonCount = contestWonCount;
         userObj.contestUniqueWonCount = contestUniqueWonCount?.length || 0;
 
-        console.log("userObj.isActive:", userObj.isActive);
-
         // Only allow auto-join if the user is active
         if (userObj.isActive === true) {
             if (req.query.contestId && req.query.contestId !== "null") {
@@ -2372,8 +2293,6 @@ export const getUserById = async (req, res, next) => {
                     } else {
                         // Check if the user has enough points to join the contest
                         const requiredPoints = contestObj.points || 0; // Default to 0 if no points specified
-
-                        console.log("requiredPoints", requiredPoints);
 
                         if (userObj.points >= requiredPoints) {
                             const joinCount = Math.floor(userObj.points / requiredPoints); // Calculate how many times user can join
@@ -2400,7 +2319,6 @@ export const getUserById = async (req, res, next) => {
                 }
             } else {
                 userObj.autoJoinStatus = "No contest ID provided";
-                console.log(userObj.autoJoinStatus);
             }
         } else {
             console.log("User is not active; skipping auto-join logic.");
@@ -2453,7 +2371,6 @@ export const loginAdmin = async (req, res, next) => {
             .lean()
             .exec();
 
-        console.log("adminObj", adminObj);
         if (adminObj) {
             const passwordCheck = await comparePassword(adminObj.password, req.body.password);
             if (passwordCheck) {
@@ -2467,7 +2384,6 @@ export const loginAdmin = async (req, res, next) => {
             throw { status: 401, message: "Admin Not Found" };
         }
     } catch (err) {
-        console.log(err);
         next(err);
     }
 };
@@ -2492,14 +2408,12 @@ Thank you, Turning Point Team`,
 
         sns.publish(params, (err, data) => {
             if (err) {
-                console.log(err, err.stack);
                 res.status(500).send("Error sending SMS");
             } else {
                 res.status(200).send("User registered and SMS sent");
             }
         });
     } catch (err) {
-        console.log(err);
         next(err);
     }
 };
@@ -2605,7 +2519,7 @@ export const getUserContestsReportLose = async (req, res, next) => {
 
         // Execute the aggregation pipeline to get the result data
         const result = await UserContest.aggregate(pipeline);
-        console.log(result);
+
         // Execute another aggregation pipeline to count the distinct userIds
         const distinctCountPipeline = [
             {
@@ -2768,8 +2682,6 @@ export const getUserContestsReportWorking = async (req, res, next) => {
 };
 
 export const getUserContestsReportol = async (req, res, next) => {
-    console.log(req.query);
-
     try {
         if (!req.query.contestId) {
             return res.status(400).json({ message: "contestId query parameter is required" });
@@ -2916,7 +2828,6 @@ export const getUserContestsReport = async (req, res, next) => {
         const contestId = req.query.contestId;
         const queryType = req.query.q;
         const searchQuery = req.query.f ? req.query.f.trim() : null;
-        console.log("searchQuery", searchQuery, req.query.f);
 
         // Define match condition based on the search query
         const matchCondition = {
@@ -2983,6 +2894,7 @@ export const getUserContestsReport = async (req, res, next) => {
                     note: 1,
                     "userObj.phone": 1,
                     "userObj.name": 1,
+                    "userObj.isBlocked": 1,
                     userId: 1,
                     // updatedAt: 1,
                     // userJoinStatus: 1,
@@ -3021,8 +2933,6 @@ export const getUserContestsReport = async (req, res, next) => {
 
         // Respond with the fetched data including page information
 
-        console.log("Data", result);
-
         res.status(200).json({ data: result, page, totalPage, totalUsersJoined: joinedUsersCount });
     } catch (error) {
         console.error(error);
@@ -3032,15 +2942,29 @@ export const getUserContestsReport = async (req, res, next) => {
 
 export const addNoteFieldToUserContests = async (req, res) => {
     try {
-        const updateResult = await UserContest.updateMany(
-            { note: { $exists: false } }, // Check if the note field doesn't exist
-            { $set: { note: [] } } // Set an empty array as default
+        const updateResult = await Users.updateMany(
+            {
+                $or: [{ diamonds: { $exists: false } }, { accumulatedPoints: { $exists: false } }],
+            },
+            {
+                $set: {
+                    diamonds: 0,
+                    accumulatedPoints: 0,
+                },
+            }
         );
 
-        res.status(200).json({ success: true, message: "Note field added successfully", data: updateResult });
+        res.status(200).json({
+            success: true,
+            message: "Fields added successfully",
+            data: updateResult,
+        });
     } catch (error) {
         console.error("Error updating user contests:", error);
-        res.status(500).json({ success: false, message: "Internal server error" });
+        res.status(500).json({
+            success: false,
+            message: "Internal server error",
+        });
     }
 };
 
@@ -3253,7 +3177,7 @@ export const getUserContests = async (req, res, next) => {
 export const testupdate = async (req, res) => {
     try {
         // Update condition
-        const query = { contestId: "67a5d3e19e8fa09f8d8b2ba0" };
+        const query = { contestId: "67cfd9a53ac837d6f7516bd9" };
 
         // Update operation
         const update = { $set: { rank: "0", status: "join" } };
@@ -3393,7 +3317,7 @@ export const getPointHistoryByUserId = async (req, res) => {
             query.description = { $regex: "Contest Joined", $options: "i" };
         } else if (req.query.s === "Coupon") {
             query.type = "CREDIT";
-            query.description = { $regex: "Coupon Earned", $options: "i" };
+            query.description = { $regex: "(Coupon Earned|50% of coupon points)", $options: "i" };
         } else if (req.query.s === "Redeem") {
             query.type = "DEBIT";
             query.status = { $nin: ["reject", "pending"] };
@@ -3451,7 +3375,7 @@ export const getPointHistoryByUserId = async (req, res) => {
     }
 };
 
-export const getUserStatsReport = async (req, res, next) => {
+export const getUserStatsReport1 = async (req, res, next) => {
     try {
         const userId = req.params.id;
         const allTransactions = [
@@ -3476,6 +3400,7 @@ export const getUserStatsReport = async (req, res, next) => {
                 $group: {
                     _id: null,
                     totalAmount: { $sum: "$amount" },
+                    totalCount: { $sum: 1 },
                 },
             },
         ];
@@ -3495,6 +3420,7 @@ export const getUserStatsReport = async (req, res, next) => {
                 $group: {
                     _id: null,
                     totalAmount: { $sum: "$amount" },
+                    totalCount: { $sum: 1 },
                 },
             },
         ];
@@ -3519,7 +3445,7 @@ export const getUserStatsReport = async (req, res, next) => {
                     userId: userId,
                     type: "CREDIT",
                     description: {
-                        $regex: "Coupon Earned",
+                        $regex: "(Coupon Earned|50% of coupon points)",
                         $options: "i",
                     },
                 },
@@ -3569,8 +3495,10 @@ export const getUserStatsReport = async (req, res, next) => {
             points: user.points,
             totalPointsRedeemed: totalDebit.length > 0 ? totalDebit[0].totalAmount : 0,
             totalPointsRedeemedForProducts: totalCoupoun.length > 0 ? totalCoupoun[0].totalAmount : 0,
+            totalPointsRedeemedForProductsCounts: totalCoupoun.length > 0 ? totalCoupoun[0].totalCount : 0,
             totalPointsEarnedFormReferrals: totalReferral.length > 0 ? totalReferral[0].totalAmount : 0,
             totalPointsRedeemedForLiking: likingReel.length > 0 ? likingReel[0].totalAmount : 0,
+            totalPointsRedeemedForLikingCount: likingReel.length > 0 ? likingReel[0].totalCount : 0,
             totalPointsRedeemedInContest: total.length > 0 ? total[0].totalAmount : 0,
             userAllTransactions: userAllTransactions,
         };
@@ -3582,54 +3510,27 @@ export const getUserStatsReport = async (req, res, next) => {
     }
 };
 
-export const getUserStatsReportTEST = async (req, res, next) => {
+export const getUserStatsReport = async (req, res, next) => {
     try {
         const userId = req.params.id;
-
-        // Define pipelines for aggregation
-        const allTransactions = [
-            {
-                $match: { userId: userId },
-            },
-        ];
 
         const likingReelpipeline = [
             {
                 $match: {
                     userId: userId,
                     type: "CREDIT",
-                    description: { $regex: "liking a reel", $options: "i" },
+                    description: {
+                        $regex: "liking a reel",
+                        $options: "i",
+                    },
                 },
             },
             {
-                $group: { _id: null, totalAmount: { $sum: "$amount" } },
-            },
-        ];
-
-        const totalPointsRedeemedInContestPipeline = [
-            {
-                $match: {
-                    userId: userId,
-                    type: "DEBIT",
-                    $and: [{ status: { $ne: "reject" } }, { status: { $ne: "pending" } }],
-                    description: { $regex: "Contest Joined", $options: "i" },
+                $group: {
+                    _id: null,
+                    totalAmount: { $sum: "$amount" },
+                    totalCount: { $sum: 1 }, // Count total transactions
                 },
-            },
-            {
-                $group: { _id: null, totalAmount: { $sum: "$amount" } },
-            },
-        ];
-
-        const totalDebitPipeline = [
-            {
-                $match: {
-                    userId: userId,
-                    type: "DEBIT",
-                    $and: [{ status: { $ne: "reject" } }, { status: { $ne: "pending" } }],
-                },
-            },
-            {
-                $group: { _id: null, totalAmount: { $sum: "$amount" } },
             },
         ];
 
@@ -3638,70 +3539,40 @@ export const getUserStatsReportTEST = async (req, res, next) => {
                 $match: {
                     userId: userId,
                     type: "CREDIT",
-                    description: { $regex: "Coupon Earned", $options: "i" },
+                    description: {
+                        $regex: "(Coupon Earned|50% of coupon points)",
+                        $options: "i",
+                    },
                 },
             },
             {
-                $group: { _id: null, totalAmount: { $sum: "$amount" } },
-            },
-        ];
-
-        const totalPointsReferralPipeline = [
-            {
-                $match: {
-                    userId: userId,
-                    type: "CREDIT",
-                    description: { $regex: "Referral Reward", $options: "i" },
+                $group: {
+                    _id: null,
+                    totalAmount: { $sum: "$amount" },
+                    totalCount: { $sum: 1 }, // Count total transactions
                 },
             },
-            {
-                $group: { _id: null, totalAmount: { $sum: "$amount" } },
-            },
         ];
 
-        // Execute aggregation pipelines
-        const userAllTransactions = await pointHistoryModel.aggregate(allTransactions).exec();
         const likingReel = await pointHistoryModel.aggregate(likingReelpipeline).exec();
-        const totalContest = await pointHistoryModel.aggregate(totalPointsRedeemedInContestPipeline).exec();
-        const totalCoupon = await pointHistoryModel.aggregate(totalPointsCouponPipeline).exec();
-        const totalReferral = await pointHistoryModel.aggregate(totalPointsReferralPipeline).exec();
-        const totalDebit = await pointHistoryModel.aggregate(totalDebitPipeline).exec();
-
-        // Fetch user details and exclude unwanted fields
-        const user = await Users.findById(userId, {
-            fcmToken: 0,
-            isOnline: 0,
-            refCode: 0,
-            referralRewards: 0,
-            referrals: 0,
-            uid: 0,
-            updatedAt: 0,
-            actualAddress: 0,
-        }).exec();
+        const totalCoupoun = await pointHistoryModel.aggregate(totalPointsCouponPipeline).exec();
+        const user = await Users.findById(userId).exec();
 
         if (!user) {
-            throw new Error("User not found");
+            throw new Error("User not found !!!");
         }
 
-        // Calculate points redeemed
-        const totalPointsRedeemed = user.points - (totalDebit.length > 0 ? totalDebit[0].totalAmount : 0);
-
-        // Construct the response object
+        // Construct response
         const response = {
-            user, // Include the filtered user object
-            totalPointsRedeemed: totalDebit.length > 0 ? totalDebit[0].totalAmount : 0,
-            totalPointsRedeemedForProducts: totalCoupon.length > 0 ? totalCoupon[0].totalAmount : 0,
-            totalPointsEarnedFromReferrals: totalReferral.length > 0 ? totalReferral[0].totalAmount : 0,
+            userName: user.name,
+            points: user.points,
             totalPointsRedeemedForLiking: likingReel.length > 0 ? likingReel[0].totalAmount : 0,
-            totalPointsRedeemedInContest: totalContest.length > 0 ? totalContest[0].totalAmount : 0,
-            userAllTransactions: userAllTransactions,
+            totalPointsRedeemedForLikingCount: likingReel.length > 0 ? likingReel[0].totalCount : 0, // New Count
+            totalPointsRedeemedForProducts: totalCoupoun.length > 0 ? totalCoupoun[0].totalAmount : 0,
+            totalPointsRedeemedForProductsCount: totalCoupoun.length > 0 ? totalCoupoun[0].totalCount : 0, // New Count
         };
 
-        res.status(200).json({
-            message: "User stats report fetched successfully",
-            data: response,
-            success: true,
-        });
+        res.status(200).json({ message: "User Contest", data: response, success: true });
     } catch (error) {
         console.error(error);
         next(error);
@@ -3771,7 +3642,6 @@ export const getAllCaprenterByContractorName1 = async (req, res) => {
         // Fetch commissions earned by carpenters (assuming commissions are stored in point logs)
         const carpentersIds = carpenters.map((carpenter) => carpenter._id.toString());
 
-        console.log("carpentersID", carpentersIds);
         const commissionLogs = await pointHistoryModel
             .find({
                 userId: { $in: carpentersIds },
@@ -3780,11 +3650,8 @@ export const getAllCaprenterByContractorName1 = async (req, res) => {
             })
             .exec();
 
-        console.log("Royalty Logs:", commissionLogs); // Log commission logs to check
-
         // Calculate total commission earned by carpenters
         const totalCommission = commissionLogs.reduce((total, log) => {
-            console.log("Log Amount:", log.amount); // Log amount for each commission
             return total + log.amount;
         }, 0);
 
@@ -3894,9 +3761,9 @@ export const getCaprentersByContractorNameAdmin = async (req, res) => {
         const businessName = req.params.name;
         const carpenters = await Users.find({ "contractor.businessName": { $in: businessName }, role: "CARPENTER" }).select("name phone email isActive kycStatus role points");
 
-        if (carpenters.length === 0) {
-            return res.status(404).json({ message: "No carpenters found for the specified business name" });
-        }
+        // if (carpenters.length === 0) {
+        //     return res.status(404).json({ message: "No carpenters found for the specified business name" });
+        // }
 
         res.status(200).json(carpenters);
     } catch (err) {
@@ -3907,9 +3774,7 @@ export const getCaprentersByContractorNameAdmin = async (req, res) => {
 
 export const getAllContractors = async (req, res) => {
     try {
-        const contractors = await Users.find({ role: "CONTRACTOR", phone: { $ne: "9876543210" } })
-            .select("name phone businessName points")
-            .sort({ points: -1 });
+        const contractors = await Users.find({ role: "CONTRACTOR" }).select("name phone businessName points").sort({ points: -1 });
         if (contractors.length === 0) {
             return res.status(404).json({ message: "No contractors found" });
         }
@@ -3925,6 +3790,37 @@ export const getExcelReportOfUsers = async (req, res) => {
         // Fetch all users
         const users = await Users.find().populate("referrals").exec();
 
+        // Extract userIds as Strings
+        const userIds = users.map((user) => user._id.toString());
+
+        // Aggregate total Reels likes per user
+        const reelsLikes = await reelLikesModel.aggregate([{ $addFields: { userIdStr: { $toString: "$userId" } } }, { $match: { userIdStr: { $in: userIds } } }, { $group: { _id: "$userIdStr", count: { $sum: 1 } } }]);
+
+        const reelsLikesMap = reelsLikes.reduce((acc, { _id, count }) => {
+            acc[_id] = count;
+            return acc;
+        }, {});
+
+        // Aggregate total Coupons scanned per user
+        const couponsScanned = await CouponsModel.aggregate([{ $match: { scannedEmail: { $in: users.map((user) => user.email) } } }, { $group: { _id: "$scannedEmail", count: { $sum: 1 } } }]);
+
+        const couponsScannedMap = couponsScanned.reduce((acc, { _id, count }) => {
+            acc[_id] = count;
+            return acc;
+        }, {});
+
+        // ✅ FIX: Convert `userId` to String in `userContest` aggregation
+        const contestsWon = await userContest.aggregate([
+            { $addFields: { userIdStr: { $toString: "$userId" } } }, // Convert ObjectId to String
+            { $match: { userIdStr: { $in: userIds }, status: "win" } }, // Ensure correct filtering
+            { $group: { _id: "$userIdStr", count: { $sum: 1 } } },
+        ]);
+
+        const contestsWonMap = contestsWon.reduce((acc, { _id, count }) => {
+            acc[_id] = count;
+            return acc;
+        }, {});
+
         // Create an Excel workbook
         const workbook = new ExcelJS.Workbook();
         const worksheet = workbook.addWorksheet("Users Report");
@@ -3934,46 +3830,25 @@ export const getExcelReportOfUsers = async (req, res) => {
             { header: "Name", key: "name" },
             { header: "Email", key: "email" },
             { header: "Phone", key: "phone" },
+            { header: "Role", key: "role" },
             { header: "Points", key: "points" },
             { header: "Total Reels Likes", key: "totalReelsLikes" },
             { header: "Total Coupons Scanned", key: "totalCouponsScanned" },
             { header: "Total Contests Won", key: "totalContestsWon" },
         ];
 
-        // Prepare the data for each user
-        const userData = [];
-
-        for (const user of users) {
-            // Get total Reels liked by the user from the reelLikes collection
-            const totalReelsLikes = await reelLikesModel.countDocuments({ userId: user._id });
-
-            // Get total Coupons scanned by the user
-            const totalCouponsScanned = await CouponsModel.countDocuments({
-                scannedEmail: user.email, // Assuming scanning is tracked by email
-            });
-
-            // Get total Contests won by the user
-            const totalContestsWon = await userContest.countDocuments({
-                userId: user._id,
-                status: "win", // Assuming status 'win' means the contest is won
-            });
-
-            // Push the data into the userData array
-            userData.push({
-                userId: user.uid,
+        // Prepare and add user data
+        users.forEach((user) => {
+            worksheet.addRow({
                 name: user.name,
                 email: user.email,
                 phone: user.phone,
+                role: user.role,
                 points: user.points,
-                totalReelsLikes,
-                totalCouponsScanned,
-                totalContestsWon,
+                totalReelsLikes: reelsLikesMap[user._id.toString()] || 0,
+                totalCouponsScanned: couponsScannedMap[user.email] || 0,
+                totalContestsWon: contestsWonMap[user._id.toString()] || 0, // ✅ Fixed here
             });
-        }
-
-        // Add rows to the worksheet
-        userData.forEach((user) => {
-            worksheet.addRow(user);
         });
 
         // Set the response headers for downloading the file
@@ -3993,17 +3868,246 @@ export const getExcelReportOfUsers = async (req, res) => {
 
 export const getTop50Contractors = async (req, res) => {
     try {
-        const contractors = await Users.find({ role: "CONTRACTOR", phone: { $ne: "9876543210" } })
-            .select("name phone businessName points") // Include points field
-            .sort({ points: -1 }) // Sort in descending order
-            .limit(50); // Limit to top 50
+        const topContractors = await userModel
+            .find({ role: "CONTRACTOR", phone: { $ne: "9876543210" } }) // Filter Contractors
+            .sort({ totalPointsEarned: -1 }) // Sort by totalPointsEarned (highest first)
+            .limit(50) // Get top 50
+            .select("_id name phone businessName role totalPointsEarned image"); // Select only required fields
 
-        if (contractors.length === 0) {
-            return res.status(404).json({ message: "No contractors found" });
+        if (!topContractors.length) {
+            return res.status(404).json({ message: "No Contractors found" });
         }
 
-        res.status(200).json(contractors);
+        res.status(200).json({ success: true, data: topContractors });
     } catch (err) {
+        console.error(err);
+        res.status(500).json({ message: "Server error" });
+    }
+};
+
+export const getTop50Carpenters = async (req, res) => {
+    try {
+        const topCarpenters = await userModel
+            .find({ role: "CARPENTER" }) // Filter Carpenters
+            .sort({ totalPointsEarned: -1 }) // Sort by totalPointsEarned (highest first)
+            .limit(50) // Get top 50
+            .select("_id name phone businessName role totalPointsEarned image"); // Select only required fields
+
+        if (!topCarpenters.length) {
+            return res.status(404).json({ message: "No Carpenters found" });
+        }
+
+        res.status(200).json({ success: true, data: topCarpenters });
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ message: "Server error" });
+    }
+};
+
+export const getTop50MonthlyContractors = async (req, res) => {
+    try {
+        const startOfMonth = new Date(new Date().setDate(1)); // First day of the month
+        const endOfMonth = new Date(); // Current date
+
+        // Aggregate total points earned for each contractor in the current month
+        const topContractors = await pointHistoryModel.aggregate([
+            {
+                $match: {
+                    type: "CREDIT", // Only consider credited points
+                    createdAt: { $gte: startOfMonth, $lte: endOfMonth }, // Filter by current month
+                },
+            },
+            {
+                $group: {
+                    _id: "$userId", // Group by userId
+                    totalPointsEarned: { $sum: "$amount" }, // Sum of credited points
+                },
+            },
+            { $sort: { totalPointsEarned: -1 } }, // Sort by highest points
+            { $limit: 50 }, // Get top 50
+        ]);
+
+        if (!topContractors.length) {
+            return res.status(404).json({ message: "No Contractors found" });
+        }
+
+        // Fetch contractor details from the user collection
+        const contractorIds = topContractors.map((contractor) => new mongoose.Types.ObjectId(contractor._id));
+        const contractorDetails = await userModel.find({ _id: { $in: contractorIds }, role: "CONTRACTOR", phone: { $ne: "9876543210" } }, "_id name phone businessName role points image");
+
+        // Merge total points with contractor details
+        const result = contractorDetails.map((contractor) => {
+            const pointsData = topContractors.find((c) => c._id.toString() === contractor._id.toString());
+            return {
+                ...contractor.toObject(),
+                totalPointsEarned: pointsData ? pointsData.totalPointsEarned : 0,
+            };
+        });
+
+        res.status(200).json({ success: true, data: result });
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ message: "Server error" });
+    }
+};
+
+
+
+
+export const getTop50MonthlyCarpenters = async (req, res) => {
+    try {
+        const startOfMonth = new Date(new Date().setDate(1)); // First day of the month
+        const endOfMonth = new Date(); // Current date
+
+        // Aggregate total points earned for each carpenter in the current month
+        const topCarpenters = await pointHistoryModel.aggregate([
+            {
+                $match: {
+                    type: "CREDIT", // Only consider credited points
+                    createdAt: { $gte: startOfMonth, $lte: endOfMonth }, // Filter by current month
+                },
+            },
+            {
+                $group: {
+                    _id: "$userId", // Group by userId
+                    totalPointsEarned: { $sum: "$amount" }, // Sum of credited points
+                },
+            },
+            { $sort: { totalPointsEarned: -1 } }, // Sort by highest points
+            { $limit: 50 }, // Get top 50
+        ]);
+
+        if (!topCarpenters.length) {
+            return res.status(404).json({ message: "No Carpenters found" });
+        }
+
+        // Fetch carpenter details from the user collection
+        const carpenterIds = topCarpenters.map((carpenter) => new mongoose.Types.ObjectId(carpenter._id));
+        const carpenterDetails = await userModel.find(
+            { _id: { $in: carpenterIds }, role: "CARPENTER" },
+            "_id name phone businessName role points image"
+        );
+
+        // Merge total points with carpenter details
+        const result = carpenterDetails.map((carpenter) => {
+            const pointsData = topCarpenters.find((c) => c._id.toString() === carpenter._id.toString());
+            return {
+                ...carpenter.toObject(),
+                totalPointsEarned: pointsData ? pointsData.totalPointsEarned : 0,
+            };
+        });
+
+        res.status(200).json({ success: true, data: result });
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ message: "Server error" });
+    }
+};
+
+export const updateTotalPointsForAllUsers = async (req, res) => {
+    try {
+        const usersWithCreditPoints = await pointHistoryModel.aggregate([
+            // Step 1: Filter only "CREDIT" transactions
+            { $match: { type: "CREDIT" } },
+
+            // Step 2: Convert userId (string) to ObjectId
+            {
+                $addFields: {
+                    userIdObject: { $toObjectId: "$userId" },
+                },
+            },
+
+            // Step 3: Group transactions by userId and sum credit points
+            {
+                $group: {
+                    _id: "$userIdObject",
+                    totalCreditPoints: { $sum: "$amount" },
+                },
+            },
+
+            // Step 4: Lookup user details from Users collection
+            {
+                $lookup: {
+                    from: "users",
+                    localField: "_id",
+                    foreignField: "_id",
+                    as: "userInfo",
+                },
+            },
+
+            // Step 5: Unwind to flatten user info
+            { $unwind: "$userInfo" },
+
+            // Step 6: Project required fields
+            {
+                $project: {
+                    _id: "$userInfo._id",
+                    name: "$userInfo.name",
+                    phone: "$userInfo.phone",
+                    role: "$userInfo.role",
+                    totalCreditPoints: 1,
+                },
+            },
+        ]);
+
+        if (!usersWithCreditPoints.length) {
+            return res.status(404).json({ message: "No users found with credit transactions" });
+        }
+
+        // Step 7: Update totalPointsEarned for all users
+        const bulkUpdates = usersWithCreditPoints.map((user) => ({
+            updateOne: {
+                filter: { _id: user._id },
+                update: { $set: { totalPointsEarned: user.totalCreditPoints } },
+            },
+        }));
+
+        await userModel.bulkWrite(bulkUpdates);
+
+        res.status(200).json({ success: true, message: "All users updated successfully" });
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ message: "Server error" });
+    }
+};
+
+export const getUserCreditHistory = async (req, res) => {
+    try {
+        const { userId } = req.query;
+
+        const creditHistory = await pointHistoryModel.aggregate([
+            {
+                $match: { userId, type: "CREDIT" }, // Filter only CREDIT transactions for user
+            },
+            {
+                $sort: { createdAt: -1 }, // Sort by latest transactions
+            },
+            {
+                $group: {
+                    _id: null, // Group all records
+                    totalAmount: { $sum: "$amount" }, // Calculate total CREDIT amount
+                    transactions: {
+                        $push: {
+                            amount: "$amount",
+                            description: "$description",
+                            createdAt: "$createdAt",
+                        },
+                    }, // Store all transactions
+                },
+            },
+        ]);
+
+        if (!creditHistory.length) {
+            return res.status(404).json({ message: "No credit history found for this user" });
+        }
+
+        res.status(200).json({
+            success: true,
+            grandTotal: creditHistory[0].totalAmount, // Grand total amount
+            data: creditHistory[0].transactions, // List of credit transactions
+        });
+    } catch (err) {
+        console.error(err);
         res.status(500).json({ message: "Server error" });
     }
 };

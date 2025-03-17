@@ -1,7 +1,6 @@
 import { rolesObj } from "../helpers/Constants";
 
 export const UserListwithOutPagination = (payload) => {
-    console.log(payload);
     let pipeline = [],
         matchCondition = {},
         sortCondition = { isActive: 1, kycStatus: 1, createdAt: -1 };
@@ -80,7 +79,6 @@ export const UserListwithOutPagination = (payload) => {
 };
 
 export const UserList = (payload) => {
-    console.log(payload);
     let pipeline = [],
         matchCondition = {},
         sortCondition = {};
@@ -117,13 +115,25 @@ export const UserList = (payload) => {
     }
 
     // Date range filtering for createdAt
+    // if (payload.startDate || payload.endDate) {
+    //     matchCondition.createdAt = {};
+    //     if (payload.startDate) {
+    //         matchCondition.createdAt.$gte = new Date(payload.startDate);
+    //     }
+    //     if (payload.endDate) {
+    //         matchCondition.createdAt.$lte = new Date(payload.endDate);
+    //     }
+    // }
+
     if (payload.startDate || payload.endDate) {
         matchCondition.createdAt = {};
         if (payload.startDate) {
             matchCondition.createdAt.$gte = new Date(payload.startDate);
         }
         if (payload.endDate) {
-            matchCondition.createdAt.$lte = new Date(payload.endDate);
+            let endDate = new Date(payload.endDate);
+            endDate.setHours(23, 59, 59, 999); // Set time to the end of the day
+            matchCondition.createdAt.$lte = endDate;
         }
     }
 
@@ -158,8 +168,10 @@ export const UserList = (payload) => {
                 isBlocked: 1,
                 note: 1,
                 contractor: 1,
-                isActiveDate:1,
-                isVerified:1
+                isActiveDate: 1,
+                isVerified: 1,
+                diamonds: 1,
+                accumulatedPoints: 1,
             },
         },
 

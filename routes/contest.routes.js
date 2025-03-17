@@ -24,6 +24,7 @@ import {
     checkContest,
     checkContestPrevious,
     addUserContestNote,
+    updateUserToObjectId,
 } from "../controllers/contest.controller";
 let router = express.Router();
 import { authorizeJwt } from "../middlewares/auth.middleware";
@@ -39,7 +40,7 @@ router.patch("/updateById/:id", updateById);
 router.delete("/deleteById/:id", deleteById);
 // router.get("/joinContest/:id", authorizeJwt, joinContest);
 router.post("/joinContest/:id", authorizeJwt, joinContestByCoupon);
-router.post("/addUserContestNote",  addUserContestNote);
+router.post("/addUserContestNote", addUserContestNote);
 router.get("/myContests", authorizeJwt, myContests);
 router.get("/getCurrentContest", authorizeJwt, getCurrentContest);
 router.post("/luckyDraw/:id", authorizeJwt, luckyDraw);
@@ -51,8 +52,7 @@ router.get("/previousContestRewards", getPreviousContestRewards);
 router.get("/openContest", getOpenContests);
 router.get("/check-contest-previous", checkContestPrevious);
 
-
+router.put("/updateUserToObjectId", updateUserToObjectId);
 router.get("/check-contest", checkContest);
-
 
 export default router;

@@ -61,6 +61,12 @@ import {
     getTop50Contractors,
     getAllUsers,
     getExcelReportOfUsers,
+    getTop50Carpenters,
+    getUserCreditHistory,
+    updateWinnersBlockStatus,
+    updateTotalPointsForAllUsers,
+    getTop50MonthlyContractors,
+    getTop50MonthlyCarpenters,
 } from "../controllers/users.controller";
 import { authorizeJwt } from "../middlewares/auth.middleware";
 import { sendSingleNotificationMiddleware } from "../middlewares/fcm.middleware";
@@ -71,8 +77,8 @@ router.post("/refresh-token", refreshToken);
 router.get("/check-token", authorizeJwt, (req, res) => res.json({ valid: true }));
 router.post("/register", registerUser);
 router.post("/toggle-block", blockUser);
+router.post("/bulkupdateWinnersBlockStatus", updateWinnersBlockStatus);
 router.put("/updateAllUsersKycStatus", updateAllUsersKycStatus);
-
 router.put("/updateBlocklowentries", updateBlocklowentries);
 router.get("/applyReward/:id", authorizeJwt, applyRewards);
 router.get("/getUserReferralsReportById/:id", getUserReferralsReportById);
@@ -92,6 +98,12 @@ router.patch("/update-profile-admin", authorizeJwt, updateUserProfileAdmin);
 router.patch("/update-profile-image", authorizeJwt, updateUserProfileImage);
 router.get("/getAllContractors", getAllContractors);
 router.get("/getTopContractors", getTop50Contractors);
+router.get("/getTopMonthlyContractors", getTop50MonthlyContractors);
+router.get("/getTopCarpenters", getTop50Carpenters);
+router.get("/getTopMonthlyCarpenters", getTop50MonthlyCarpenters);
+router.get("/getUserCreditHistory", getUserCreditHistory);
+router.put("/update-all-users-totalpoints", updateTotalPointsForAllUsers);
+
 router.get("/getExcelReportOfUser", getExcelReportOfUsers);
 router.post("/getContractorUsingPhone", getContractorUsingPhone);
 router.get("/getAllCarpentersByContractorName", authorizeJwt, getAllCaprenterByContractorName);
@@ -99,7 +111,7 @@ router.get("/getCaprentersByContractorNameAdmin/:name", authorizeJwt, getCaprent
 router.get("/getUserStatsReport/:id", getUserStatsReport);
 router.get("/getUserPointHistoryById", getPointHistoryByUserId);
 router.get("/getUsers", authorizeJwt, getUsers);
-router.get("/getAllUsers",  getAllUsers);
+router.get("/getAllUsers", getAllUsers);
 router.get("/getUsersAnalytics", getUsersAnalytics);
 router.get("/getUserActivityAnalysis", authorizeJwt, getUserActivityAnalysis);
 router.get("/getContestsJoinedByUser/:userId", getContestsJoinedByUser);

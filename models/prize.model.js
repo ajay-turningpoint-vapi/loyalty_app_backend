@@ -9,6 +9,6 @@ let prize = mongoose.Schema(
     },
     { timestamps: true }
 );
-
+prize.index({ contestId: 1, rank: 1 });
 export default mongoose.model("prize", prize);
     

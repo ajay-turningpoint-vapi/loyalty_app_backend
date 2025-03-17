@@ -7,7 +7,7 @@ import qr  from "qr-image";
 export const addMail = async(req, res, next) => {
     try {
         let found = await contactMail.find({ email: req.body.email }).lean().exec();
-        console.log(found, "ppppp");
+      
         if (found.length > 0) throw new Error('you already send mail');
 
         if (!req.body.name) throw new Error("name is mandatory");

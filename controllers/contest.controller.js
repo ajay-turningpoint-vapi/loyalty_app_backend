@@ -9,6 +9,7 @@ import activityLogsModel from "../models/activityLogs.model";
 import { sendNotificationMessage } from "../middlewares/fcm.middleware";
 import { sendWhatsAppMessageContestWinners } from "../helpers/utils";
 import prizeModel from "../models/prize.model";
+import mongoose from "mongoose";
 import moment from "moment";
 import { client } from "../Services/whatsappClient";
 let Contestintial = "TNPC";
@@ -70,7 +71,7 @@ export const addContest = async (req, res, next) => {
         const timeString = req.body.endTime + ":00";
         const numberOfPrizes = req.body?.prizeArr?.length || 0;
         const newTime = addSeconds(timeString, numberOfPrizes * 30); // Changed to add seconds
-        console.log("endTime", timeString, "newTime", newTime);
+
         req.body.antimationTime = newTime;
 
         let ContestObj = await Contest(req.body).save();
@@ -84,8 +85,6 @@ export const addContest = async (req, res, next) => {
                     description: prize.description,
                     image: prize.image,
                 };
-
-                console.log(prizeObj, "prize obj");
 
                 let prizeInstance = await Prize(prizeObj).save();
                 rank++;
@@ -121,7 +120,7 @@ export const addContestold = async (req, res, next) => {
         const timeString = req.body.endTime + ":00";
         const numberOfPrizes = req.body?.prizeArr?.length || 0;
         const newTime = subtractSeconds(timeString, numberOfPrizes * 30);
-        console.log("endTime", timeString, "newTime", newTime);
+
         req.body.antimationTime = newTime;
 
         let ContestObj = await Contest(req.body).save();
@@ -135,8 +134,6 @@ export const addContestold = async (req, res, next) => {
                     description: prize.description,
                     image: prize.image,
                 };
-
-                console.log(prizeObj, "prize obj ");
 
                 let prizeInstance = await Prize(prizeObj).save();
                 rank++;
@@ -534,16 +531,12 @@ export const getOpenContests = async (req, res) => {
         // Adjust time format from "16-48" to "16:48" (HH:mm format) to match the database format
         const formattedTime = time.replace("-", ":");
 
-        console.log("Checking contests for date and time:", startDate, endDate, formattedTime);
-
         // Find contests that match criteria
         const openContests = await Contest.find({
             endTime: formattedTime, // Match the endTime with the formatted time
             endDate: { $gte: startDate, $lte: endDate }, // Match the endDate in the range of the given date (UTC)
             status: "APPROVED",
         }).exec();
-
-        console.log("openContests", openContests);
 
         if (!openContests.length) {
             return res.status(404).json({ message: "No contests found for the given time and date." });
@@ -994,8 +987,6 @@ export const getContestCoupons = async (req, res, next) => {
 
 export const getContestAdmin = async (req, res, next) => {
     try {
-        console.log(req.query, "query");
-
         let pipeline = [
             {
                 $addFields: {
@@ -1080,7 +1071,7 @@ export const updateById = async (req, res, next) => {
 
         if (req.body?.prizeArr && req.body?.prizeArr?.length > 0) {
             let rank = 1;
-            console.log("prze loop");
+
             for (const prize of req.body?.prizeArr) {
                 let prizeObj = {
                     rank: parseInt(rank),
@@ -1143,8 +1134,6 @@ export const joinContest = async (req, res, next) => {
 
         let userJoin = ContestObj.userJoin;
 
-        console.log(ContestObj);
-
         let userContestObj = {
             contestId: ContestObj._id,
             userId: UserObj._id,
@@ -1161,7 +1150,6 @@ export const joinContest = async (req, res, next) => {
                 points: UserObj.points - parseInt(points),
             };
             if (userPoints?.points >= 0) {
-                console.log(userPoints);
                 await userModel.findByIdAndUpdate(req.user.userId, userPoints).exec();
                 await Contest.findByIdAndUpdate(req.params.id, { userJoin: parseInt(userJoin) + 1 }).exec();
             } else {
@@ -1190,7 +1178,7 @@ export const joinContestByCoupon1 = async (req, res, next) => {
 
         // Number of times to repeat the operation
         const repeatCount = parseInt(req.body.count) || 1;
-        console.log("count", req.body);
+
         // Initialize user join count
         let userJoinCount = 0;
 
@@ -1300,7 +1288,6 @@ export const joinContestByCoupon = async (req, res, next) => {
 export const addUserContestNote = async (req, res) => {
     try {
         const { _id, text, image } = req.body;
-
 
         // Update the contest entry using $push to add note efficiently
         const updatedContest = await userContest.findByIdAndUpdate(_id, { $push: { note: { text, image } } }, { new: true, runValidators: true });
@@ -1555,7 +1542,7 @@ export const previousContest = async (req, res, next) => {
             .sort({ endDate: -1 })
             .lean()
             .exec();
-        console.log(ContestObj);
+
         if (ContestObj) {
             let contestUsers = await userContest.find({ contestId: ContestObj._id, status: "win" }).lean().exec();
             let contestPrizes = await Prize.find({ contestId: ContestObj._id }).sort({ rank: 1 }).lean().exec();
@@ -1588,7 +1575,6 @@ export const currentContest1 = async (req, res, next) => {
         currentDate.setHours(0, 0, 0, 0);
         let previousFirstDate = currentDate;
 
-        console.log("---", previousFirstDate);
         // Set the date to the last day of the previous month
         currentDate = new Date();
         currentDate.setMonth(currentDate.getMonth() + 1);
@@ -1596,7 +1582,6 @@ export const currentContest1 = async (req, res, next) => {
 
         let previousLastDate = currentDate;
 
-        console.log("==", previousLastDate);
         // Find the most recent closed contest within the specified date range
         let ContestObj = await Contest.findOne({
             status: "CLOSED",
@@ -1635,15 +1620,13 @@ export const currentContest = async (req, res, next) => {
         currentDate.setDate(1);
         currentDate.setHours(0, 0, 0, 0);
         let previousFirstDate = currentDate;
-        console.log(previousFirstDate, "previousFirstDate");
-        //for previous month last date
+
         currentDate = new Date();
         currentDate.setMonth(currentDate.getMonth() + 1);
         currentDate.setDate(0);
 
         let previousLastDate = currentDate;
 
-        console.log(previousLastDate, "previousLastDate");
         let ContestObj = await Contest.findOne({ status: "CLOSED", endDate: { $gte: previousFirstDate, $lte: previousLastDate } })
             .sort({ endDate: -1 })
             .lean()
@@ -1792,7 +1775,6 @@ export const getPreviousContestRewards1 = async (req, res, next) => {
             .sort({ endDate: -1, endTime: -1 }) // Sort in descending order to get the second most recent contest first
             .lean()
             .exec();
-        console.log("previousContest".previousContest);
 
         if (!previousContest) {
             return res.status(404).json({ message: "No previous closed contest found", success: false });
@@ -1949,7 +1931,6 @@ export const sendContestNotifications = async (req, res, next) => {
         for (const user of users) {
             try {
                 await sendWhatsAppMessageContestWinners(user.phone, contestName, winnersList);
-                console.log(`Notification sent to ${user.name} (${user.phone})`);
             } catch (error) {
                 console.error(`Failed to send notification to ${user.name} (${user.phone}): ${error.message}`);
                 failedNotifications.push({
@@ -2026,8 +2007,6 @@ export const sendContestWinnerNotifications1 = async (req, res, next) => {
             return res.status(404).json({ message: "No prizes found for this contest", success: false });
         }
 
-        console.log("prizes", prizes);
-
         // Step 5: Fetch all users excluding Admin and Contractor
         const users = await userModel
             .find({ name: { $nin: ["Admin User", "Contractor"] } }) // Exclude Admin and Contractor
@@ -2045,8 +2024,6 @@ export const sendContestWinnerNotifications1 = async (req, res, next) => {
             const prize = prizes.find((p) => p.rank.toString() === winner.rank.toString());
 
             if (prize) {
-                console.log("winner", winner);
-
                 // try {
                 //     const number = "918975944936";
                 //     const formattedNumber = `${number}@c.us`;
@@ -2169,7 +2146,6 @@ const sendNotificationMessageToAllUsers = async (message) => {
             const response = await client.sendMessage(formattedNumber, message);
 
             if (response && response.success) {
-                console.log("Message sent successfully");
             } else {
                 console.error("Failed to send message:", response.error || response.message);
             }
@@ -2202,16 +2178,12 @@ const postContestUpdates = async (contestId, validContestUsers) => {
 
         // Update contest status to "CLOSED"
         const response = await Contest.findByIdAndUpdate(contestId, { status: "CLOSED" }).exec();
-        console.log("Contest Closed response", response);
 
         // Step 1: Prepare the notification message
     } catch (error) {
         console.error("Error posting contest updates:", error);
     }
 };
-
-
-
 
 export const checkContest = async (req, res) => {
     try {
@@ -2302,8 +2274,6 @@ export const checkContest = async (req, res) => {
 };
 
 export const checkContestPrevious = async (date, time) => {
-    console.log("Checking contests for date and time:", date, time);
-
     try {
         // Find contests that match criteria
         const openContests = await Contest.find({
@@ -2312,21 +2282,17 @@ export const checkContestPrevious = async (date, time) => {
         }).exec();
 
         if (!openContests.length) {
-            console.log("No contests found for the given time and date.");
             return;
         }
-
-        console.log("List of contests:", openContests);
 
         for (const contest of openContests) {
             const updatedContest = await Contest.findOneAndUpdate({ _id: contest._id, status: "APPROVED" }, { $set: { status: "PROCESSING" } }, { new: true }).exec();
 
             if (!updatedContest) {
-                console.log(`Contest ${contest._id} is already being processed by another instance.`);
                 continue;
             }
 
-            const [contestPrizes, contestUsers] = await Promise.all([Prize.find({ contestId: contest._id }).sort({ rank: 1 }).lean().exec(), userContest.find({ contestId: contest._id, status: "join" }).lean().exec()]);
+            const [contestPrizes, contestUsers] = await Promise.all([Prize.find({ contestId: contest._id }).sort({ rank: 1 }).lean().exec(), cccccccccccc.find({ contestId: contest._id, status: "join" }).lean().exec()]);
 
             const allocatedPrizeIds = new Set();
 
@@ -2379,15 +2345,41 @@ export const checkContestPrevious = async (date, time) => {
         for (const user of userData) {
             try {
                 await sendNotificationMessage(user._id, title, body, "contestResult");
-
-                console.log(`Notification sent to ${user._id}: ${title}: ${body}`);
             } catch (error) {
                 console.error(`Failed to send notification to ${user.name} (${user.phone}): ${error.message}`);
             }
         }
-
-        console.log("Contest check completed successfully:", startDate.getTime(), time);
     } catch (error) {
         console.error("Error in checkContest:", error);
+    }
+};
+
+export const updateUserToObjectId = async (req, res) => {
+    try {
+        // Find all documents that need updating
+        const contests = await userContest.find({});
+
+        // Prepare bulk update operations
+        const bulkOps = contests.map((contest) => ({
+            updateOne: {
+                filter: { _id: contest._id },
+                update: {
+                    $set: {
+                        contestId: new mongoose.Types.ObjectId(contest.contestId),
+                        userId: new mongoose.Types.ObjectId(contest.userId),
+                    },
+                },
+            },
+        }));
+
+        // Execute bulk update if there are documents to update
+        if (bulkOps.length > 0) {
+            await userContest.bulkWrite(bulkOps);
+        }
+
+        res.json({ success: true, message: "Bulk update completed successfully" });
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ success: false, message: "Internal Server Error" });
     }
 };

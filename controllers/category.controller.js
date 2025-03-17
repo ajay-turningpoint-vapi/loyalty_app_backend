@@ -3,7 +3,7 @@ import Category from "../models/category.model";
 
 export const addCategory = async (req, res, next) => {
     try {
-        // console.log(req.body);
+      
         const CategoryNameCheck = await Category.findOne({
             $or: [{ name: new RegExp(`^${req.body.name}$`, "i") }, { slug: new RegExp(`^${req.body.slug}$`) }],
         }).exec();
@@ -14,9 +14,9 @@ export const addCategory = async (req, res, next) => {
         }
         if (req.body.parentCategoryId) {
             let categoryObj = await Category.findById(req.body.parentCategoryId).lean().exec();
-            // console.log(categoryObj, "objjjjjj")
+    
             let parentCategoryArr = [...categoryObj.parentCategoryArr];
-            // console.log(parentCategoryArr, "pppppppp");
+      
             parentCategoryArr.push({ parentId: categoryObj._id });
             obj = {
                 ...req.body,
@@ -39,9 +39,9 @@ export const addCategory = async (req, res, next) => {
 export const getCategory = async (req, res, next) => {
     try {
         let categoryArr = await Category.find().lean().exec();
-        // console.log(getCategory, "efnwfnewfo")
+  
         for (let el of categoryArr) {
-            console.log(el);
+   
             if (el.parentCategoryId) {
                 let parentObj = await Category.findById(el.parentCategoryId).lean().exec();
                 if (parentObj) {

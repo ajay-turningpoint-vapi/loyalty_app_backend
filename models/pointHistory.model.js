@@ -18,4 +18,6 @@ let pointHistory = mongoose.Schema(
     { timestamps: true }
 );
 
+pointHistory.index({ createdAt: 1 });
+
 export default mongoose.model("pointHistory", pointHistory);

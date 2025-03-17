@@ -53,7 +53,7 @@ const deleteSessionData = (folderPath) => {
     try {
         if (fs.existsSync(folderPath)) {
             fs.rmSync(folderPath, { recursive: true, force: true });
-            console.log("Session data cleared.");
+          
         }
     } catch (error) {
         console.error("Error deleting session data:", error.message);

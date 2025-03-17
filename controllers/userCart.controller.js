@@ -40,7 +40,7 @@ export const updateCart = async(req, res, next) => {
     try {
         let { items, } = req.body;
         const userCartObj = await userCart.findOne({ userId: req.params.id }).exec();
-        console.log(userCartObj, "a894284209");
+       
         var ab;
         if (userCartObj.items.some(el => `${el.productId}` == req.body.items.productId)) {
             ab = await userCart.

@@ -8,9 +8,9 @@ const deleteSessionData = (sessionFolderPath) => {
     try {
         if (fs.existsSync(sessionFolderPath)) {
             fs.rmSync(sessionFolderPath, { recursive: true, force: true });
-            console.log("Session data cleared successfully.");
+           
         } else {
-            console.log("Session folder does not exist, skipping deletion.");
+           
         }
     } catch (error) {
         console.error("Error clearing session data:", error.message);

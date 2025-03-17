@@ -13,6 +13,7 @@ import brand from "./routes/brand.routes";
 import category from "./routes/category.routes";
 import indexRouter from "./routes/index.routes";
 import product from "./routes/product.routes";
+import redeemableProduct from "./routes/redeemableProduct.routes";
 import tag from "./routes/tag.routes";
 import TaxRouter from "./routes/Tax.routes";
 import userAddress from "./routes/userAddress.routes";
@@ -50,17 +51,17 @@ const fs = require("fs");
 const app = express();
 app.use(cors());
 const dumpFolder = path.join(__dirname, "dump");
-console.log(dumpFolder);
+
 if (!fs.existsSync(dumpFolder)) {
     fs.mkdirSync(dumpFolder);
-    console.log("Dump folder created");
+   
 }
 mongoose.connect(CONFIG.MONGOURI, { useNewUrlParser: true, useUnifiedTopology: true }, (err) => {
     if (err) {
-        console.log(err);
+     
     } else {
         console.log("connected to db at " + CONFIG.MONGOURI);
-        // initializeWhatsAppClient();
+       
     }
 });
 app.use(logger("dev"));
@@ -72,6 +73,7 @@ app.use("/", indexRouter);
 app.use("/users", usersRouter);
 app.use("/category", category);
 app.use("/product", product);
+app.use("/redeemableProduct", redeemableProduct);
 app.use("/brand", brand);
 app.use("/attribute", attribute);
 app.use("/tag", tag);
@@ -106,8 +108,8 @@ app.get("/backup", async (req, res) => {
                 console.error("Backup error:", error);
                 return res.status(500).json({ error: "Backup failed" });
             }
-            console.log("Backup successful");
-            console.log(stdout);
+          
+           
             console.error(stderr);
             res.json({ message: "Backup successful" });
         });
@@ -129,14 +131,14 @@ const activityLogsDeleteJob = schedule.scheduleJob("0 0 * * 0#2", async () => {
         const retentionPeriod = 14 * 24 * 60 * 60 * 1000; // 14 days in milliseconds
         const thresholdDate = new Date(Date.now() - retentionPeriod);
         const result = await activityLogsModel.deleteMany({ createdAt: { $lt: thresholdDate } });
-        console.log(`Deleted ${result.deletedCount} activity logs older than ${thresholdDate}`);
+     
     } catch (error) {
         console.error("Error deleting activity logs:", error);
     }
 });
 
 const findInactiveUserJob = schedule.scheduleJob("0 10 * * 1", async () => {
-    console.log("Running task to check inactive users and send notifications...");
+  
     try {
         // Calculate the timestamp for one week ago
         const oneWeekAgo = new Date();
@@ -170,7 +172,7 @@ const findInactiveUserJob = schedule.scheduleJob("0 10 * * 1", async () => {
                     const title = "We Miss You! Come Back and Win!";
                     const body = `Hey there! We've noticed that you haven't been using our app lately. Don't miss out on all the amazing offers, exciting events like lucky draws, and much more! Come back now to enjoy everything we have to offer. We can't wait to see you again!`;
                     await sendNotificationMessage(user._id, title, body);
-                    console.log("Notification sent for user:", user?.name);
+            
                 } catch (error) {
                     console.error("Error sending notification for user:", user._id, error);
                 }

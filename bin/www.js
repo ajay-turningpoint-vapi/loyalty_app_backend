@@ -1,5 +1,6 @@
 import app from "../app";
 import http from "http";
+import { WebSocketServer } from "ws";
 
 let port = normalizePort(process.env.PORT || "3000");
 console.log("PORT", port);
@@ -7,7 +8,31 @@ console.log("PORT", port);
 app.set("port", port);
 
 let server = http.createServer(app);
+const wss = new WebSocketServer({ server });
 
+
+const clients = new Set();
+wss.on("connection", (ws) => {
+    console.log("New WebSocket client connected");
+    clients.add(ws);
+
+    ws.on("message", (message) => {
+        console.log("Received:", message.toString());
+    });
+
+    ws.on("close", () => {
+        console.log("Client disconnected");
+        clients.delete(ws);
+    });
+});
+
+export function broadcastMessage(data) {
+    clients.forEach((client) => {
+        if (client.readyState === 1) {
+            client.send(JSON.stringify(data));
+        }
+    });
+}
 server.listen(port);
 server.on("error", onError);
 server.on("listening", onListening);

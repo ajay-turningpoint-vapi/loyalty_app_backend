@@ -20,7 +20,6 @@ export const createPointlogs = async (userId, amount, type, description, mobileD
 
     try {
         const savedLog = await new pointHistory(historyLog).save();
-        console.log("Point history saved successfully:", savedLog);
     } catch (err) {
         console.error("Error saving point history:", err.message);
     }
@@ -80,7 +79,7 @@ export const redeemUserPointsAgainstProduct = async (req, res) => {
     }
 };
 
-export const getPointHistory = async (req, res, next) => {
+export const getPointHistoryold = async (req, res, next) => {
     try {
         let limit = 0;
         let page = 0;
@@ -173,6 +172,36 @@ export const getPointHistory = async (req, res, next) => {
         next(err);
     }
 };
+
+export const getPointHistory = async (req, res, next) => {
+    try {
+        const limit = req.query.limit > 0 ? Number(req.query.limit) : 10; // Default limit to 10
+        const page = req.query.page > 0 ? Number(req.query.page) - 1 : 0;
+
+        const count = await pointHistory.countDocuments();
+        const totalPages = Math.ceil(count / limit);
+
+        const pointHistoryArr = await pointHistory
+            .find()
+            .sort({ createdAt: -1 }) // Sorting by most recent
+            .skip(page * limit)
+            .limit(limit)
+            .lean();
+
+        res.status(200).json({
+            message: "List of points history",
+            data: pointHistoryArr,
+            count,
+            totalPages,
+            limit,
+            page: page + 1,
+            success: true,
+        });
+    } catch (err) {
+        next(err);
+    }
+};
+
 export const getPointHistoryMobile = async (req, res, next) => {
     try {
         let query = {};
@@ -265,7 +294,7 @@ export const pointsRedeemOLd = async (req, res, next) => {
                 await sendWhatsAppMessageForUPITransfer(userObj.name, points, additionalInfo.transferDetails?.upiId);
             }
         }
-        console.log(additionalInfo, "additionalInfo");
+
         await createPointlogs(req.user.userId, points, pointTransactionType.DEBIT, pointDescription, mobileDescription, "pending", additionalInfo);
     } catch (err) {
         next(err);
@@ -280,14 +309,12 @@ export const pointsRedeem = async (req, res, next) => {
 };
 export const updatePointHistoryStatus = async (req, res, next) => {
     try {
-        console.log(req.params, "params");
         let pointHistoryObj = await pointHistory.findById(req.params.id).exec();
         if (!pointHistoryObj) {
             throw new Error("Transaction Not found");
         }
 
         if (req.body.status == "reject") {
-            console.log(pointHistoryObj.userId, "pointHistoryObj.userId");
             let userObj = await userModel.findById(pointHistoryObj.userId).exec();
             if (!userObj) {
                 throw new Error("User not found");

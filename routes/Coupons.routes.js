@@ -15,6 +15,9 @@ import {
     getUsedCouponsforMap,
     couponMultipleDelete,
     getScannedCouponsByEmail,
+    getExcelReportOfCoupons,
+    addFieldsinCoupon,
+    removeFieldsFromCoupon,
 } from "../controllers/coupons.controller";
 import { authorizeJwt } from "../middlewares/auth.middleware";
 
@@ -22,6 +25,8 @@ let router = express.Router();
 
 router.post("/addCoupon", addCoupons);
 router.get("/getCoupons", getAllCoupons);
+router.patch("/addFieldsInCoupons", addFieldsinCoupon);
+router.patch("/removeFieldsFromCoupon", removeFieldsFromCoupon);
 router.get("/getAllCouponsAnalytics", getAllCouponsAnalytics);
 router.get("/getCouponsCount", getCouponCount);
 router.patch("/updateById/:id", updateCouponsById);
@@ -35,5 +40,5 @@ router.post("/addMultipleCoupons", addMultipleCoupons);
 router.post("/applyCoupon", authorizeJwt, applyCoupon);
 router.post("/generateCoupon", authorizeJwt, generateCoupon);
 router.delete("/multiple-delete", couponMultipleDelete);
-
+router.get("/exportCouponReport", getExcelReportOfCoupons);
 export default router;

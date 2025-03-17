@@ -16,8 +16,17 @@ router.get("/initialize", async (req, res) => {
 router.get("/", async (req, res) => {
     try {
         const restrictions = await getRestrictions();
-        res.status(200).json(restrictions || {});
+        const now = new Date();
+        const today = now.toISOString().split("T")[0];
+
+        // Ensure restrictions and exemptedDates exist before accessing
+        if (restrictions?.exemptedDates?.length > 0 && restrictions.exemptedDates.includes(today)) {
+            return res.status(200).json(null);
+        }
+
+        res.status(200).json(restrictions || null);
     } catch (error) {
+        console.log(error);
         res.status(500).json({ message: "Error retrieving restrictions", error });
     }
 });
@@ -39,8 +48,13 @@ router.post("/", async (req, res) => {
 });
 
 // Protected route with time restrictions
+// router.get("/restricted-endpoint", timeRestrictionMiddleware, (req, res, next) => {
+
+//     res.json({ message: "Access granted" });
+// });
+
 router.get("/restricted-endpoint", timeRestrictionMiddleware, (req, res) => {
-    res.json({ message: "Access granted" });
+    res.json({ blockedTimes: null, exemptedDates: null, message: "Access granted" });
 });
 
 module.exports = router;

@@ -13,7 +13,7 @@ export const sendNotificationLuckyDraw = async (userId, req, res, next) => {
             };
 
             const response = await admin.messaging().send(message);
-            console.log("Successfully sent notification:", response);
+
         } else {
             // Handle the case where FCM token is not found
             res.status(400).json({ message: "FCM token not found for the user" });
@@ -26,7 +26,7 @@ export const sendNotificationLuckyDraw = async (userId, req, res, next) => {
 
 
 export const sendNotification = async (fcmToken, name, message) => {
-    console.log(fcmToken, message);
+
     try {
         const payload = {
             notification: {
@@ -38,7 +38,7 @@ export const sendNotification = async (fcmToken, name, message) => {
             token: fcmToken,
             notification: payload.notification, // Use notification field directly
         });
-        console.log("Notification sent successfully:", response);
+      
         // return response;
     } catch (error) {
         console.error("Error sending notification:", error);
@@ -49,7 +49,7 @@ export const sendNotification = async (fcmToken, name, message) => {
 export const sendNotificationMessage = async (userId, title, message, type) => {
     const user = await userModel.findOne({ _id: userId });
     if (!user || !user.fcmToken) {
-        console.log("FCM token not found for user:", userId);
+       
         return; // Skip sending notification
     }
 
@@ -69,7 +69,7 @@ export const sendNotificationMessage = async (userId, title, message, type) => {
             notification: payload.notification, // Use notification field directly
             data: payload.data,
         });
-        console.log("Notification sent successfully:", response);
+     
         return response;
     } catch (error) {
         // Check if the error is related to "Requested entity was not found"

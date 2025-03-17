@@ -12,7 +12,7 @@ AWS.config.update({
 const sns = new AWS.SNS();
 
 export const UserActiveSMS = async (req, res, next) => {
-    console.log(req.body);
+
 
     try {
         const { name, phone } = req.body;
@@ -36,14 +36,14 @@ Turning Point Team`,
 
         sns.publish(params, (err, data) => {
             if (err) {
-                console.log(err, err.stack);
+              
                 // res.status(500).send("Error sending SMS");
             } else {
                 // res.status(200).send("User registered and SMS sent");
             }
         });
     } catch (err) {
-        console.log(err);
+       
         next(err);
     }
 };
@@ -71,14 +71,14 @@ Turning Point Team`,
 
         sns.publish(params, (err, data) => {
             if (err) {
-                console.log(err, err.stack);
+              
                 res.status(500).send("Error sending SMS");
             } else {
                 res.status(200).send("User registered and SMS sent");
             }
         });
     } catch (err) {
-        console.log(err);
+     
         next(err);
     }
 };
@@ -94,7 +94,7 @@ export const generateUid = async () => {
             check = false;
             return tempUid;
         }
-        console.log("GENERATING NEW UID,Current", tempUid);
+      
     }
 };
 
@@ -165,7 +165,6 @@ export async function sendWhatsAppMessage(templateName, to, body_1, body_2, body
 }
 
 export async function sendWhatsAppMessageContestWinners(to, contestName, winnersList) {
-    console.log("Winner contest notification:", to, "contestName", contestName, "winner lists", winnersList);
 
     const payload = {
         integrated_number: "918200025803",
@@ -207,7 +206,7 @@ export async function sendWhatsAppMessageContestWinners(to, contestName, winners
             },
         });
 
-        console.log("WhatsApp message sent successfully:", response.data);
+      
         return response.data;
     } catch (error) {
         console.error("Error sending WhatsApp message:", error.response ? error.response.data : error.message);

@@ -60,13 +60,6 @@ let User = mongoose.Schema(
             default: false,
         },
 
-        note: [
-            {
-                reason: { type: String, required: true },
-                timestamp: { type: Date, default: Date.now },
-            },
-        ],
-
         referrals: [{ type: mongoose.Schema.Types.ObjectId, ref: "User" }],
         referredBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
         referralRewards: [{ type: mongoose.Schema.Types.ObjectId, ref: "ReferralRewards" }],
@@ -74,12 +67,15 @@ let User = mongoose.Schema(
         rewardedReferrals: [{ type: mongoose.Schema.Types.ObjectId, ref: "User" }],
         likedReels: [{ type: mongoose.Schema.Types.ObjectId, ref: "reels" }],
         totalReelViews: { type: Number, default: 0 },
+        
+        totalPointsEarned: { type: Number, default: 0 },
+        diamonds: { type: Number, default: 0 },
+        accumulatedPoints: { type: Number, default: 0 },
     },
     { timestamps: true }
 );
-User.index({ name: 1 });
+User.index({ isBlocked: 1 });
 User.index({ phone: 1 });
 User.index({ email: 1 });
-User.index({ image: 1 });
 
 export default mongoose.model("User", User);

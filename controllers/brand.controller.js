@@ -18,7 +18,7 @@ export const registerBrand = async (req, res, next) => {
 export const getBrand = async (req, res, next) => {
     try {
         const getBrand = await Brand.find().exec();
-        console.log(getBrand);
+    
         res.status(200).json({ message: "getBrand", data: getBrand, success: true });
     } catch (err) {
         next(err);

@@ -28,4 +28,7 @@ let Contest = mongoose.Schema(
     { timestamps: true }
 );
 
+Contest.index({ endDate: 1 });
+
+
 export default mongoose.model("Contests", Contest);

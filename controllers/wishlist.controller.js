@@ -11,7 +11,7 @@ export const createWishlist = async (req, res, next) => {
         // console.log(productfound)
         if (productfound) {
             await wishlist.findOneAndRemove({ productId: productId }).exec();
-            console.log("found-product");
+  
         } else {
             // await wishlist.findOneAndUpdate({ userId: userId }, { $set: { _id: items.productId } });
             await wishlist.create({ userId: userId, productId: productId });
@@ -31,7 +31,7 @@ export const getWishlist = async (req, res, next) => {
 
         for (const el of productArr) {
             let index = wishlistedProductArr.findIndex((ele) => `${ele.productId}` == `${el._id}`);
-            console.log(index, `${el._id}`, wishlistedProductArr);
+            
             if (index != -1) {
                 el.wishlisted = true;
             } else {

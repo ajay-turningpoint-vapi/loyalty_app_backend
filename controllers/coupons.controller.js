@@ -17,6 +17,12 @@ import XLSX from "xlsx";
 import { saveAs } from "file-saver";
 import axios from "axios";
 import { sendNotificationMessage } from "../middlewares/fcm.middleware";
+import ExcelJS from "exceljs";
+import Transaction from "../models/couponTransaction.modal";
+import fs from "fs";
+
+const jsonFilePath = "D:/Turningpoint/loyaty_app_backend/controllers/backup.json";
+
 const nanoid = customAlphabet("1234567890", 10);
 export const addCoupons = async (req, res, next) => {
     try {
@@ -157,6 +163,61 @@ export const getAllCoupons = async (req, res, next) => {
     }
 };
 
+export const addFieldsinCoupon = async (req, res, next) => {
+    try {
+        // Fetch all users with _id and email
+        const users = await Users.find({}, { _id: 1, email: 1 });
+
+        let totalUpdated = 0;
+
+        for (const user of users) {
+            // Find all coupons for this user
+            const coupons = await Coupon.find({ scannedEmail: user.email });
+
+            if (coupons.length > 0) {
+                const bulkOps = coupons.map((coupon) => ({
+                    updateOne: {
+                        filter: { _id: coupon._id },
+                        update: {
+                            $set: {
+                                carpenterId: user._id,
+                                carpenterPoints: Number(coupon.value), // Convert before updating
+                            },
+                        },
+                    },
+                }));
+
+                // Perform bulk update
+                const result = await Coupon.bulkWrite(bulkOps);
+                totalUpdated += result.modifiedCount;
+            }
+        }
+
+        console.log(`Updated ${totalUpdated} documents.`);
+        res.status(200).json({ message: `Updated ${totalUpdated} documents.` });
+    } catch (error) {
+        console.error("Error updating coupons:", error);
+        res.status(500).json({ error: "Error updating coupons." });
+    }
+};
+
+export const removeFieldsFromCoupon = async (req, res, next) => {
+    try {
+        await Coupon.updateMany(
+            {},
+            {
+                $unset: { carpenterId: "", carpenterPoints: "", contractorPoints: "" },
+            }
+        );
+
+        console.log("Fields removed successfully.");
+        res.status(200).json({ message: "Fields removed successfully." });
+    } catch (error) {
+        console.error("Error removing fields from coupons:", error);
+        res.status(500).json({ message: "Error removing fields from coupons." });
+    }
+};
+
 export const getAllCouponsAnalyticsold = async (req, res, next) => {
     try {
         let couponsArr = await Coupon.find({}).lean().exec();
@@ -205,8 +266,6 @@ export const getAllCouponsAnalytics = async (req, res, next) => {
 
 export const updateCouponsById = async (req, res, next) => {
     try {
-        console.log(req.body);
-
         let obj = {};
 
         if (req.body.name && req.body.name != "") {
@@ -274,7 +333,6 @@ export const getActiveCoupons = async (req, res, next) => {
         }
 
         let CouponArr = await Coupon.find(query).lean().exec();
-        console.log(CouponArr, "CouponArr");
 
         res.status(200).json({ message: "active coupons", data: CouponArr, success: true });
     } catch (error) {
@@ -329,9 +387,15 @@ export const getUsedCouponsforMap = async (req, res, next) => {
         }
 
         if (startDate && endDate) {
+            let start = new Date(startDate);
+            let end = new Date(endDate);
+
+            // Adjust end date to include the full day
+            end.setHours(23, 59, 59, 999);
+
             query.updatedAt = {
-                $gte: new Date(startDate), // Greater than or equal to startDate
-                $lte: new Date(endDate), // Less than or equal to endDate
+                $gte: start, // Include full start date
+                $lte: end, // Include full end date up to 23:59:59.999
             };
         }
 
@@ -479,7 +543,6 @@ export const getActiveCouponsQrZip = async (req, res, next) => {
         }
 
         let zipFileLocation = await ZipGenerator(couponsLocationArr);
-        console.log(zipFileLocation, "zipFileLocation");
 
         res.status(200).json({ message: "Coupon zip File Location", data: zipFileLocation, success: true });
     } catch (error) {
@@ -520,7 +583,7 @@ export const addMultipleCoupons = async (req, res, next) => {
             }
         }
         let remainingCoupon = req.body.count - couponArray.length;
-        console.log(remainingCoupon);
+
         if (remainingCoupon > 0) {
             for (let index = 0; index < remainingCoupon; index++) {
                 let blankCoupon = { value: 0, count: 0, name: await generateCouponCode() };
@@ -672,8 +735,6 @@ export const applyCouponworking = async (req, res, next) => {
         const { id, latitude, longitude } = req.body;
         const { userId, name, email } = req.user;
 
-        console.log("name", name, "email", email);
-
         // Find coupon by ID or name
         const findArr = mongoose.isValidObjectId(id) ? [{ _id: id }, { name: id }] : [{ name: id }];
         const CouponObj = await Coupon.findOne({ $or: findArr }).exec();
@@ -754,17 +815,21 @@ export const applyCouponworking = async (req, res, next) => {
 };
 
 export const applyCoupon = async (req, res, next) => {
+    const session = await mongoose.startSession();
+    session.startTransaction(); // Start a transaction for consistency
+
     try {
         const { id, latitude, longitude } = req.body;
-        const { userId, name, email } = req.user;
 
-        console.log(req.body, "req.body");
+        const { userId, name, email } = req.user;
 
         // Find coupon by ID or name
         const findArr = mongoose.isValidObjectId(id) ? [{ _id: id }, { name: id }] : [{ name: id }];
-        const CouponObj = await Coupon.findOne({ $or: findArr }).exec();
+        const CouponObj = await Coupon.findOne({ $or: findArr }).lean(); // Use lean() for better performance
 
         if (!CouponObj) {
+            await session.abortTransaction();
+            session.endSession();
             return res.status(404).json({ message: "Coupon not found" });
         }
 
@@ -774,89 +839,125 @@ export const applyCoupon = async (req, res, next) => {
             {
                 $set: {
                     maximumNoOfUsersAllowed: 0,
+                    carpenterId: userId,
+                    carpenterPoints: CouponObj.value,
                     scannedUserName: name,
                     scannedEmail: email,
                     location: { type: "Point", coordinates: [longitude, latitude] },
                 },
             },
-            { new: true }
+            { new: true, session }
         );
 
         if (!updatedCoupon) {
+            await session.abortTransaction();
+            session.endSession();
             return res.status(400).json({ message: "Coupon already applied!" });
         }
 
-        // Fetch user details and handle missing user scenario
-        const UserObj = await Users.findById(userId).exec();
+        // Fetch user details
+        const UserObj = await Users.findById(userId).lean();
+
         if (!UserObj) {
-            console.log("User not found");
-            // return res.status(404).json({ message: "User not found" });
+            console.error("User not found");
+            await session.abortTransaction();
+            session.endSession();
+            return res.status(404).json({ message: "User not found" });
         }
 
         const points = updatedCoupon.value;
+        let responseMessage = "Better luck next time";
 
-        // If points are greater than 0, process the coupon logic
-        if (points !== 0) {
-            await processPoints(UserObj, updatedCoupon, points, name, CouponObj); // Pass CouponObj here
-            return res.status(200).json({ message: "Coupon applied", success: true, points });
-        } else {
-            return res.status(200).json({ message: "Better luck next time", success: true, points });
+        if (points > 0) {
+            await processPoints(UserObj, updatedCoupon, points, name, CouponObj, session);
+            responseMessage = "Coupon applied";
         }
+
+        await session.commitTransaction();
+        session.endSession();
+
+        return res.status(200).json({ message: responseMessage, success: true, points });
     } catch (err) {
+        await session.abortTransaction();
+        session.endSession();
         console.error("Error in applyCoupon:", err);
-        next(err); // Continue to error handler if necessary
+        next(err);
     }
 };
 
-// Extracted function to handle points and logs
-const processPoints = async (UserObj, updatedCoupon, points, name, CouponObj) => {
-    // Add CouponObj here
-    const pointDescription = `Coupon earned ${points} points by scanning the ${updatedCoupon.productName} QR code.`;
-    const mobileDescription = "Coupon";
+// Handle points allocation and logs
+const processPoints = async (UserObj, updatedCoupon, points, name, CouponObj, session) => {
+    const pointDescription = `Coupon earned ${points} points by scanning ${updatedCoupon.name} ${updatedCoupon.productName} (${UserObj.name}).`;
 
-    // Create point logs for the user
-    await createPointlogs(UserObj._id, points, pointTransactionType.CREDIT, pointDescription, mobileDescription, "success");
-    await activityLogsModel.create({ userId: UserObj._id, type: "Scanned Coupon" });
+    // Calculate new accumulated points
+    const totalAccumulatedPoints = UserObj.accumulatedPoints + points;
 
-    // Update user's points
-    const updatedUserPoints = { points: UserObj.points + points };
-    await Users.findByIdAndUpdate(UserObj._id, updatedUserPoints).exec();
+    // Calculate how many diamonds can be created (1 diamond per 2000 points)
+    const newDiamonds = Math.floor(totalAccumulatedPoints / 2000);
 
-    // Handle contractor points update and notifications
-    if (UserObj.contractor && UserObj.contractor.name) {
-        await handleContractorPoints(UserObj.contractor.name, points, name, CouponObj); // Pass CouponObj here
+    // Remaining points after conversion to diamonds
+    const remainingPoints = totalAccumulatedPoints % 2000;
+
+    // Update user points, diamonds, and accumulated points atomically
+    await Users.bulkWrite(
+        [
+            {
+                updateOne: {
+                    filter: { _id: UserObj._id },
+                    update: {
+                        $inc: {
+                            points: points, // Increment points
+                            totalPointsEarned: points, // Increment total points earned
+                            diamonds: newDiamonds, // Increment diamonds if any
+                        },
+                        $set: {
+                            accumulatedPoints: remainingPoints, // Store remaining points
+                        },
+                    },
+                },
+            },
+        ],
+        { session }
+    );
+
+    // Insert activity log
+    await activityLogsModel.create([{ userId: UserObj._id, type: "Scanned Coupon", createdAt: new Date() }], { session });
+
+    // Create point logs
+    await createPointlogs(UserObj._id, points, pointTransactionType.CREDIT, pointDescription, "Coupon", "success", session);
+
+    // Handle contractor points
+    if (UserObj.contractor?.phone) {
+        await handleContractorPoints(UserObj.contractor.phone, UserObj._id, points, name, CouponObj, session);
     }
 };
 
-// Extracted function for contractor points handling
-const handleContractorPoints = async (contractorName, points, couponName, CouponObj) => {
-    // Ensure points are greater than 1 before processing
-    if (points > 1) {
-        const contractorPoints = Math.floor(points * 0.5);
-        const contractorPointDescription = `Earned ${contractorPoints} points (50% of coupon points) from ${couponName} ${CouponObj.productName}`;
+// Handle contractor rewards
+const handleContractorPoints = async (phone, carpenterId, points, couponName, CouponObj, session) => {
+    if (points <= 1) return;
 
-        const ContractorObj = await Users.findOne({ name: contractorName, role: "CONTRACTOR" }).exec();
+    const ContractorObj = await Users.findOne({ phone, role: "CONTRACTOR" }).lean();
 
-        if (ContractorObj) {
-            const updatedContractorPoints = { points: ContractorObj.points + contractorPoints };
-            await Users.findByIdAndUpdate(ContractorObj._id, updatedContractorPoints).exec();
-            await createPointlogs(ContractorObj._id, contractorPoints, pointTransactionType.CREDIT, contractorPointDescription, "Royalty", "success");
+    const contractorPoints = Math.floor(points * 0.5);
+    const contractorPointDescription = `Earned ${contractorPoints} points (50% of coupon points to (Contractor: ${ContractorObj?.name})) from ${couponName} ${CouponObj.name} ${CouponObj.productName}.`;
 
-            // Update contractorId in the coupon
-            await Coupon.findByIdAndUpdate(CouponObj._id, {
-                $set: { contractorId: ContractorObj._id },
-            });
+    if (ContractorObj) {
+        await Users.findByIdAndUpdate(ContractorObj._id, { $inc: { points: contractorPoints, totalPointsEarned: contractorPoints } }, { session });
+        await createPointlogs(ContractorObj._id, contractorPoints, pointTransactionType.CREDIT, contractorPointDescription, "Royalty", "success", session);
+        await Coupon.findByIdAndUpdate(
+            CouponObj._id,
+            {
+                $set: {
+                    contractorId: ContractorObj._id,
+                    contractorPoints,
+                },
+            },
+            { session }
+        );
 
-            // Send contractor notification
-            await sendContractorNotification(ContractorObj._id, contractorPoints, couponName);
-        } else {
-            console.warn(`Contractor with name ${contractorName} not found.`);
-        }
-    } else {
-        console.log("Points are less than or equal to 1, no contractor points will be processed.");
+        await sendContractorNotification(ContractorObj._id, contractorPoints, couponName);
     }
 };
-
 // Send notification to contractor
 const sendContractorNotification = async (contractorId, contractorPoints, couponName) => {
     try {
@@ -891,5 +992,56 @@ export const couponMultipleDelete = async (req, res, next) => {
     } catch (error) {
         console.error("Error deleting coupons:", error);
         return res.status(500).json({ message: "An error occurred." });
+    }
+};
+
+export const getExcelReportOfCoupons = async (req, res) => {
+    try {
+        // Fetch all coupons
+        const coupons = await Coupon.find().exec();
+
+        // Create an Excel workbook
+        const workbook = new ExcelJS.Workbook();
+        const worksheet = workbook.addWorksheet("Coupons Report");
+
+        // Define columns for the Excel sheet
+        worksheet.columns = [
+            { header: "Coupon Name", key: "name" },
+            { header: "Value", key: "value" },
+            { header: "Product ID", key: "productId" },
+            { header: "Product Name", key: "productName" },
+            { header: "Max Users Allowed", key: "maximumNoOfUsersAllowed" },
+            { header: "Scanned User Name", key: "scannedUserName" },
+            { header: "Scanned Email", key: "scannedEmail" },
+            { header: "Scanned At", key: "createdAt" },
+        ];
+
+        // Prepare and add coupon data
+        coupons.forEach((coupon) => {
+            worksheet.addRow({
+                name: coupon.name,
+                value: coupon.value,
+                productId: coupon.productId,
+                productName: coupon.productName,
+                maximumNoOfUsersAllowed: coupon.maximumNoOfUsersAllowed || "N/A",
+
+                scannedUserName: coupon.scannedUserName || "N/A",
+                scannedEmail: coupon.scannedEmail || "N/A",
+                createdAt: coupon.createdAt ? new Date(coupon.createdAt).toLocaleString() : "N/A",
+            });
+        });
+
+        // Set the response headers for downloading the file
+        res.setHeader("Content-Disposition", "attachment; filename=coupons-report.xlsx");
+        res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+
+        // Write the Excel file to the response
+        await workbook.xlsx.write(res);
+
+        // End the response
+        res.end();
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ message: "An error occurred while generating the coupons report." });
     }
 };

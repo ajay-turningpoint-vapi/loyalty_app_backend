@@ -9,7 +9,6 @@ let User = mongoose.Schema(
         phone: { type: String, required: true, unique: true },
         name: String,
         businessName: String,
-
         contractor: {
             name: String,
             businessName: String,
@@ -19,11 +18,8 @@ let User = mongoose.Schema(
             name: String,
             phone: String,
         },
-
         pincode: String,
-
         password: { type: String },
-
         points: { type: Number, default: 100 },
         isActive: { type: Boolean, default: false },
         isActiveDate: { type: Date, default: null },
@@ -62,12 +58,11 @@ let User = mongoose.Schema(
 
         referrals: [{ type: mongoose.Schema.Types.ObjectId, ref: "User" }],
         referredBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
-        referralRewards: [{ type: mongoose.Schema.Types.ObjectId, ref: "ReferralRewards" }],
         referralPointsAwarded: { type: Boolean, default: false },
         rewardedReferrals: [{ type: mongoose.Schema.Types.ObjectId, ref: "User" }],
         likedReels: [{ type: mongoose.Schema.Types.ObjectId, ref: "reels" }],
         totalReelViews: { type: Number, default: 0 },
-        
+
         totalPointsEarned: { type: Number, default: 0 },
         diamonds: { type: Number, default: 0 },
         accumulatedPoints: { type: Number, default: 0 },

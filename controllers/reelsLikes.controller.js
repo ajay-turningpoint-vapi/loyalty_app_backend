@@ -6,6 +6,7 @@ import Reel from "../models/reels.model";
 import User from "../models/user.model";
 import { createPointlogs } from "./pointHistory.controller";
 
+
 export const likeReelsOld = async (req, res, next) => {
     try {
         const { userId, reelId } = req.body;
@@ -34,58 +35,32 @@ export const likeReels = async (req, res, next) => {
     try {
         const { userId, reelId } = req.body;
 
-        // Use a transaction to ensure atomicity
-        const session = await mongoose.startSession();
-        session.startTransaction();
+        // Use Promise.all to execute independent queries in parallel
+        const [existingLike, reelObj] = await Promise.all([
+            ReelLikes.findOne({ userId, reelId }).lean(), // lean() improves read performance
+            Reel.findById(reelId).lean(), // Fetch reel without locking
+        ]);
 
-        try {
-            // Check if the user has already liked the reel
-            const existingLike = await ReelLikes.findOne({ userId, reelId }).session(session);
-            if (existingLike) {
-                await session.abortTransaction();
-                session.endSession();
-                return res.status(200).json({ message: "Reel already liked", success: false });
-            }
-
-            // Increment likeCount and fetch reel points in a single query
-            const reelObj = await Reel.findByIdAndUpdate(
-                reelId,
-                { $inc: { likeCount: 1 } }, // Atomic increment of likeCount
-                { new: true, session }
-            );
-
-            if (!reelObj) {
-                await session.abortTransaction();
-                session.endSession();
-                return res.status(404).json({ message: "Reel not found", success: false });
-            }
-
-            const pointsToEarn = parseInt(reelObj.points);
-
-            // Create the like record
-            await ReelLikes.create([{ userId, reelId }], { session });
-
-            // Award points to the user
-            await User.findByIdAndUpdate(
-                userId,
-                { $inc: { points: pointsToEarn, totalPointsEarned: pointsToEarn } }, // Atomic increment of user points
-                { session }
-            );
-
-            await createPointlogs(userId, pointsToEarn, pointTransactionType.CREDIT, `Earned ${pointsToEarn} points for liking a reel`, "Reel", "success");
-
-            
-
-            // Commit the transaction
-            await session.commitTransaction();
-            session.endSession();
-
-            res.status(200).json({ message: "Liked Reel Successfully", success: true });
-        } catch (error) {
-            await session.abortTransaction();
-            session.endSession();
-            throw error; // Ensure error is caught in catch block below
+        if (existingLike) {
+            return res.status(200).json({ message: "Reel already liked", success: false });
         }
+
+        if (!reelObj) {
+            return res.status(404).json({ message: "Reel not found", success: false });
+        }
+
+        const pointsToEarn = parseInt(reelObj.points) || 0;
+
+        // Use bulkWrite to perform multiple operations in one DB request (better performance)
+        await Promise.all([
+            ReelLikes.create({ userId, reelId }), // Insert like record
+            Reel.updateOne({ _id: reelId }, { $inc: { likeCount: 1 } }), // Increment like count
+            User.updateOne({ _id: userId }, { $inc: { points: pointsToEarn, totalPointsEarned: pointsToEarn } }), // Increment user points
+            createPointlogs(userId, pointsToEarn, pointTransactionType.CREDIT, `Earned ${pointsToEarn} points for liking a reel`, "Reel", "success"),
+        ]);
+
+        res.status(200).json({ message: "Liked Reel Successfully", success: true });
+
     } catch (err) {
         next(err);
     }

@@ -6,7 +6,7 @@ import mongoose from "mongoose";
 import userModel from "../models/user.model";
 import { sendWhatsAppMessageForBankTransfer, sendWhatsAppMessageForUPITransfer } from "../helpers/utils";
 
-export const createPointlogs = async (userId, amount, type, description, mobileDescription, status = "pending", additionalInfo = {}) => {
+export const createPointlogs = async (userId, amount, type, description, mobileDescription, status = "pending", pointType = "Point", additionalInfo = {}) => {
     let historyLog = {
         transactionId: new Date().getTime().toString(),
         userId: userId,
@@ -15,6 +15,7 @@ export const createPointlogs = async (userId, amount, type, description, mobileD
         description: description,
         mobileDescription: mobileDescription,
         status: status,
+        pointType: pointType,
         additionalInfo: additionalInfo,
     };
 
@@ -175,14 +176,144 @@ export const getPointHistoryold = async (req, res, next) => {
 
 export const getPointHistory = async (req, res, next) => {
     try {
+        const limit = Number(req.query.limit) || 10;
+        const page = Math.max(Number(req.query.page) - 1, 0) || 0;
+        const query = {};
+
+        if (req.query.type) query.type = req.query.type;
+        if (req.query.status) query.status = req.query.status;
+        if (req.query.userId) query.userId = new mongoose.Types.ObjectId(req.query.userId);
+        
+        if (req.query.startDate || req.query.endDate) {
+            query.createdAt = {};
+            if (req.query.startDate) query.createdAt.$gte = new Date(req.query.startDate);
+            if (req.query.endDate) {
+                let adjustedEndDate = new Date(req.query.endDate);
+                adjustedEndDate.setHours(23, 59, 59, 999); // Include the full end date
+                query.createdAt.$lte = adjustedEndDate;
+            }
+        }
+        const count = await pointHistory.countDocuments(query);
+        const totalPages = Math.ceil(count / limit);
+
+        let pipeline = [
+            { $match: query },
+            { $sort: { createdAt: -1 } },
+            { $skip: page * limit },
+            { $limit: limit },
+            {
+                $addFields: {
+                    userObjectId: { $toObjectId: "$userId" }, // Convert userId to ObjectId
+                },
+            },
+            {
+                $lookup: {
+                    from: "users",
+                    localField: "userObjectId", // Use converted ObjectId
+                    foreignField: "_id",
+                    as: "user",
+                },
+            },
+            { $unwind: { path: "$user", preserveNullAndEmptyArrays: true } },
+            ...(req.query.q
+                ? [
+                      {
+                          $match: {
+                              "user.phone": { $regex: req.query.q, $options: "i" },
+                          },
+                      },
+                  ]
+                : []),
+            {
+                $project: {
+                    _id: 1,
+                    transactionId: 1,
+                    userId: 1,
+                    amount: 1,
+                    description: 1,
+                    mobileDescription: 1,
+                    type: 1,
+                    status: 1,
+                    createdAt: 1,
+                    updatedAt: 1,
+                    additionalInfo: 1,
+                    "user.name": 1,
+                    "user.email": 1,
+                    "user.phone": 1,
+                },
+            },
+        ];
+
+        const pointHistoryArr = await pointHistory.aggregate(pipeline);
+
+        res.status(200).json({
+            message: "List of points history",
+            data: pointHistoryArr,
+            count,
+            totalPages,
+            limit,
+            page: page + 1,
+            success: true,
+        });
+    } catch (err) {
+        next(err);
+    }
+};
+
+export const getPointHistoryNWWORKING = async (req, res, next) => {
+    try {
         const limit = req.query.limit > 0 ? Number(req.query.limit) : 10; // Default limit to 10
         const page = req.query.page > 0 ? Number(req.query.page) - 1 : 0;
+        const { startDate, endDate } = req.query;
 
         const count = await pointHistory.countDocuments();
         const totalPages = Math.ceil(count / limit);
 
         const pointHistoryArr = await pointHistory
             .find()
+            .sort({ createdAt: -1 }) // Sorting by most recent
+            .skip(page * limit)
+            .limit(limit)
+            .lean();
+
+        res.status(200).json({
+            message: "List of points history",
+            data: pointHistoryArr,
+            count,
+            totalPages,
+            limit,
+            page: page + 1,
+            success: true,
+        });
+    } catch (err) {
+        next(err);
+    }
+};
+
+export const getPointHistory1 = async (req, res, next) => {
+    try {
+        const limit = req.query.limit > 0 ? Number(req.query.limit) : 10; // Default limit to 10
+        const page = req.query.page > 0 ? Number(req.query.page) - 1 : 0;
+        const { startDate, endDate } = req.query;
+
+        let filter = {};
+
+        // Apply date filter if startDate or endDate is provided
+        if (startDate || endDate) {
+            filter.createdAt = {};
+            if (startDate) filter.createdAt.$gte = new Date(startDate);
+            if (endDate) {
+                let adjustedEndDate = new Date(endDate);
+                adjustedEndDate.setHours(23, 59, 59, 999); // Include the entire end date
+                filter.createdAt.$lte = adjustedEndDate;
+            }
+        }
+
+        const count = await pointHistory.countDocuments(filter);
+        const totalPages = Math.ceil(count / limit);
+
+        const pointHistoryArr = await pointHistory
+            .find(filter)
             .sort({ createdAt: -1 }) // Sorting by most recent
             .skip(page * limit)
             .limit(limit)

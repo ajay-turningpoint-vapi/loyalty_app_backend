@@ -1,3 +1,4 @@
+import { de } from "date-fns/locale";
 import mongoose from "mongoose";
 
 let pointHistory = mongoose.Schema(
@@ -14,6 +15,7 @@ let pointHistory = mongoose.Schema(
             transferType: { type: String, enum: ["UPI", "BANK", "CASH"] },
             transferDetails: Object,
         },
+        pointType: { type: String, default: "Point" },
     },
     { timestamps: true }
 );

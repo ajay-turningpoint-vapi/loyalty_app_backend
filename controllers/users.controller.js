@@ -1,5 +1,5 @@
 import { UserList } from "../Builders/user.builder";
-import { broadcastMessage } from "../bin/www";
+
 import { comparePassword, encryptPassword } from "../helpers/Bcrypt";
 import { ErrorMessages, pointTransactionType, rolesObj } from "../helpers/Constants";
 import { storeFileAndReturnNameBase64 } from "../helpers/fileSystem";
@@ -605,18 +605,23 @@ export const registerUser = async (req, res, next) => {
         });
 
         // Save tokens
-        await Token.create({ uid: newUser.uid, userId: newUser._id, token: accessToken, refreshToken, fcmToken: newUser.fcmToken });
+        await Token.updateOne(
+            { uid: newUser.uid }, // Find token entry by uid
+            {
+                $set: {
+                    userId: newUser._id,
+                    token: accessToken,
+                    refreshToken,
+                    fcmToken: newUser.fcmToken,
+                },
+            },
+            { upsert: true } // If it doesn't exist, create a new entry
+        );
 
         // Send registration notification
         const registrationTitle = `👏 बधाई हो, ${newUser?.name}! 🎉`;
         const registrationBody = `🎉 Turning Point में आपका स्वागत है!`;
         await sendNotificationMessage(newUser._id, registrationTitle, registrationBody, "New User");
-
-        broadcastMessage({
-            type: "NEW_USER_REGISTERED",
-            message: `New user registered: ${newUser.name}`,
-            user: newUser,
-        });
 
         // Respond with success
         res.status(200).json({ message: "User Created", data: newUser, token: accessToken, status: true });
@@ -848,24 +853,22 @@ export const getUserReferralsReportById = async (req, res, next) => {
 
 export const getUsersReferralsReport = async (req, res, next) => {
     try {
-        // Get users who have referral rewards
-        const usersWithRewards = await Users.find({ referralRewards: { $exists: true, $ne: [] } })
-            .populate("referrals", "name")
-            .populate("referralRewards");
+        // Fetch users who have at least one rewarded referral
+        const usersWithRewards = await Users.find({ rewardedReferrals: { $exists: true, $ne: [] } })
+            .populate("referrals", "name email phone")
+            .populate("rewardedReferrals", "name email phone");
 
         // Initialize an array to store reports for users with rewards
         const usersReports = [];
-        let grandTotalRewardPointsEarned = 0; // Initialize grand total
+        let grandTotalRewardPointsEarned = 0;
 
-        // Iterate over each user with rewards to generate their report
+        // Iterate over each user to generate their referral report
         for (const user of usersWithRewards) {
             const totalReferrals = user.referrals.length;
-            const appliedRewards = user.referralRewards.filter((reward) => reward.maximumNoOfUsersAllowed === 0);
-            const pendingRewards = user.referralRewards.filter((reward) => reward.maximumNoOfUsersAllowed === 1);
-            let totalRewardPointsEarned = 0;
-            appliedRewards.forEach((reward) => {
-                totalRewardPointsEarned += reward.value;
-            });
+            const totalRewardedReferrals = user.rewardedReferrals.length;
+
+            // Mock reward calculation (adjust this logic as per your reward structure)
+            let totalRewardPointsEarned = totalRewardedReferrals * 1000;
 
             grandTotalRewardPointsEarned += totalRewardPointsEarned; // Add to grand total
 
@@ -876,18 +879,14 @@ export const getUsersReferralsReport = async (req, res, next) => {
                 email: user.email,
                 phone: user.phone,
                 referrals: user.referrals,
-                referralRewards: user.referralRewards,
-                appliedRewards: appliedRewards,
-                pendingRewards: pendingRewards,
-                totalReferrals: totalReferrals,
-                referralRewardsTotal: user.referralRewards.length,
-                appliedRewardsTotal: appliedRewards.length,
-                pendingRewardsTotal: pendingRewards.length,
-                totalRewardPointsEarned: totalRewardPointsEarned,
+                rewardedReferrals: user.rewardedReferrals,
+                totalReferrals,
+                totalRewardedReferrals,
+                totalRewardPointsEarned,
             });
         }
 
-        res.json({ usersReports, grandTotalRewardPointsEarned }); // Include grand total in response
+        res.json({ usersReports, grandTotalRewardPointsEarned });
     } catch (error) {
         console.error(error);
         res.status(500).json({ error: "Server error" });
@@ -2091,12 +2090,6 @@ export const getCounts = async (req, res) => {
             reelsCount: counts[4],
             contestCount: counts[5],
         };
-
-        broadcastMessage({
-            type: "UPDATE_COUNTS",
-            message: "Updated counts",
-            data: responseData,
-        });
 
         return res.status(200).json({
             success: true,
@@ -3317,13 +3310,14 @@ export const getPointHistoryByUserId = async (req, res) => {
             query.description = { $regex: "Contest Joined", $options: "i" };
         } else if (req.query.s === "Coupon") {
             query.type = "CREDIT";
-            query.description = { $regex: "(Coupon Earned|50% of coupon points)", $options: "i" };
+            query.pointType = { $ne: "Diamond" };
+            query.description = { $regex: "(Coupon earned|50% of coupon points)", $options: "i" };
         } else if (req.query.s === "Redeem") {
             query.type = "DEBIT";
             query.status = { $nin: ["reject", "pending"] };
         } else if (req.query.s === "Referral") {
             query.type = "CREDIT";
-            query.description = { $regex: "Referral Reward", $options: "i" };
+            query.mobileDescription = { $regex: "Referral", $options: "i" }; // ✅ Fixed regex
         }
 
         // Date filtering (startDate and endDate)
@@ -3375,201 +3369,40 @@ export const getPointHistoryByUserId = async (req, res) => {
     }
 };
 
-export const getUserStatsReport1 = async (req, res, next) => {
-    try {
-        const userId = req.params.id;
-        const allTransactions = [
-            {
-                $match: {
-                    userId: userId,
-                },
-            },
-        ];
-        const likingReelpipeline = [
-            {
-                $match: {
-                    userId: userId,
-                    type: "CREDIT",
-                    description: {
-                        $regex: "liking a reel",
-                        $options: "i",
-                    },
-                },
-            },
-            {
-                $group: {
-                    _id: null,
-                    totalAmount: { $sum: "$amount" },
-                    totalCount: { $sum: 1 },
-                },
-            },
-        ];
-        let totalPointsRedeemedInContestPipeline = [
-            {
-                $match: {
-                    userId: userId,
-                    type: "DEBIT",
-                    $and: [{ status: { $ne: "reject" } }, { status: { $ne: "pending" } }],
-                    description: {
-                        $regex: "Contest Joined",
-                        $options: "i",
-                    },
-                },
-            },
-            {
-                $group: {
-                    _id: null,
-                    totalAmount: { $sum: "$amount" },
-                    totalCount: { $sum: 1 },
-                },
-            },
-        ];
-        const totalDebitPipeline = [
-            {
-                $match: {
-                    userId: userId,
-                    type: "DEBIT",
-                    $and: [{ status: { $ne: "reject" } }, { status: { $ne: "pending" } }],
-                },
-            },
-            {
-                $group: {
-                    _id: null,
-                    totalAmount: { $sum: "$amount" },
-                },
-            },
-        ];
-        const totalPointsCouponPipeline = [
-            {
-                $match: {
-                    userId: userId,
-                    type: "CREDIT",
-                    description: {
-                        $regex: "(Coupon Earned|50% of coupon points)",
-                        $options: "i",
-                    },
-                },
-            },
-            {
-                $group: {
-                    _id: null,
-                    totalAmount: { $sum: "$amount" },
-                },
-            },
-        ];
-
-        const totalPointsReferralPipeline = [
-            {
-                $match: {
-                    userId: userId,
-                    type: "CREDIT",
-                    description: {
-                        $regex: "Referral Reward",
-                        $options: "i",
-                    },
-                },
-            },
-            {
-                $group: {
-                    _id: null,
-                    totalAmount: { $sum: "$amount" },
-                },
-            },
-        ];
-
-        const userAllTransactions = await pointHistoryModel.aggregate(allTransactions).exec();
-        const likingReel = await pointHistoryModel.aggregate(likingReelpipeline).exec();
-        const total = await pointHistoryModel.aggregate(totalPointsRedeemedInContestPipeline).exec();
-        const totalCoupoun = await pointHistoryModel.aggregate(totalPointsCouponPipeline).exec();
-        const totalReferral = await pointHistoryModel.aggregate(totalPointsReferralPipeline).exec();
-        const user = await Users.findById(userId).exec();
-
-        if (!user) {
-            throw new Error("User not found !!!");
-        }
-        const totalDebit = await pointHistoryModel.aggregate(totalDebitPipeline).exec();
-        const totalPointsRedeemed = user.points - (totalDebit.length > 0 ? totalDebit[0].totalAmount : 0);
-        // Construct the response object
-        const response = {
-            userName: user.name,
-            points: user.points,
-            totalPointsRedeemed: totalDebit.length > 0 ? totalDebit[0].totalAmount : 0,
-            totalPointsRedeemedForProducts: totalCoupoun.length > 0 ? totalCoupoun[0].totalAmount : 0,
-            totalPointsRedeemedForProductsCounts: totalCoupoun.length > 0 ? totalCoupoun[0].totalCount : 0,
-            totalPointsEarnedFormReferrals: totalReferral.length > 0 ? totalReferral[0].totalAmount : 0,
-            totalPointsRedeemedForLiking: likingReel.length > 0 ? likingReel[0].totalAmount : 0,
-            totalPointsRedeemedForLikingCount: likingReel.length > 0 ? likingReel[0].totalCount : 0,
-            totalPointsRedeemedInContest: total.length > 0 ? total[0].totalAmount : 0,
-            userAllTransactions: userAllTransactions,
-        };
-
-        res.status(200).json({ message: "User Contest", data: response, success: true });
-    } catch (error) {
-        console.error(error);
-        next(error);
-    }
-};
-
 export const getUserStatsReport = async (req, res, next) => {
     try {
         const userId = req.params.id;
-
-        const likingReelpipeline = [
-            {
-                $match: {
-                    userId: userId,
-                    type: "CREDIT",
-                    description: {
-                        $regex: "liking a reel",
-                        $options: "i",
-                    },
-                },
-            },
-            {
-                $group: {
-                    _id: null,
-                    totalAmount: { $sum: "$amount" },
-                    totalCount: { $sum: 1 }, // Count total transactions
-                },
-            },
-        ];
-
-        const totalPointsCouponPipeline = [
-            {
-                $match: {
-                    userId: userId,
-                    type: "CREDIT",
-                    description: {
-                        $regex: "(Coupon Earned|50% of coupon points)",
-                        $options: "i",
-                    },
-                },
-            },
-            {
-                $group: {
-                    _id: null,
-                    totalAmount: { $sum: "$amount" },
-                    totalCount: { $sum: 1 }, // Count total transactions
-                },
-            },
-        ];
-
-        const likingReel = await pointHistoryModel.aggregate(likingReelpipeline).exec();
-        const totalCoupoun = await pointHistoryModel.aggregate(totalPointsCouponPipeline).exec();
         const user = await Users.findById(userId).exec();
-
         if (!user) {
-            throw new Error("User not found !!!");
+            return res.status(404).json({ message: "User not found !!!", success: false });
         }
 
-        // Construct response
+        const pipelines = {
+            allTransactions: [{ $match: { userId } }],
+            likingReel: [{ $match: { userId, type: "CREDIT", description: { $regex: "liking a reel", $options: "i" } } }, { $group: { _id: null, totalAmount: { $sum: "$amount" }, totalCount: { $sum: 1 } } }],
+            totalPointsRedeemedInContest: [
+                { $match: { userId, type: "DEBIT", status: { $nin: ["reject", "pending"] }, description: { $regex: "Contest Joined", $options: "i" } } },
+                { $group: { _id: null, totalAmount: { $sum: "$amount" }, totalCount: { $sum: 1 } } },
+            ],
+            totalDebit: [{ $match: { userId, type: "DEBIT", status: { $nin: ["reject", "pending"] } } }, { $group: { _id: null, totalAmount: { $sum: "$amount" } } }],
+            totalPointsCoupon: [{ $match: { userId, type: "CREDIT", description: { $regex: "(Coupon Earned|50% of coupon points)", $options: "i" } } }, { $group: { _id: null, totalAmount: { $sum: "$amount" }, totalCount: { $sum: 1 } } }],
+            totalPointsReferral: [{ $match: { userId, type: "CREDIT", mobileDescription: { $regex: "Referral", $options: "i" } } }, { $group: { _id: null, totalAmount: { $sum: "$amount" } } }],
+        };
+
+        const [userAllTransactions, likingReel, totalContest, totalDebit, totalCoupon, totalReferral] = await Promise.all(Object.values(pipelines).map((pipeline) => pointHistoryModel.aggregate(pipeline).exec()));
+
+        const totalDebitAmount = totalDebit.length ? totalDebit[0].totalAmount : 0;
         const response = {
             userName: user.name,
             points: user.points,
-            totalPointsRedeemedForLiking: likingReel.length > 0 ? likingReel[0].totalAmount : 0,
-            totalPointsRedeemedForLikingCount: likingReel.length > 0 ? likingReel[0].totalCount : 0, // New Count
-            totalPointsRedeemedForProducts: totalCoupoun.length > 0 ? totalCoupoun[0].totalAmount : 0,
-            totalPointsRedeemedForProductsCount: totalCoupoun.length > 0 ? totalCoupoun[0].totalCount : 0, // New Count
+            totalPointsRedeemed: totalDebitAmount,
+            totalPointsRedeemedForProducts: totalCoupon.length ? totalCoupon[0].totalAmount : 0,
+            totalPointsRedeemedForProductsCount: totalCoupon.length ? totalCoupon[0].totalCount : 0,
+            totalPointsEarnedFormReferrals: totalReferral.length ? totalReferral[0].totalAmount : 0,
+            totalPointsRedeemedForLiking: likingReel.length ? likingReel[0].totalAmount : 0,
+            totalPointsRedeemedForLikingCount: likingReel.length ? likingReel[0].totalCount : 0,
+            totalPointsRedeemedInContest: totalContest.length ? totalContest[0].totalAmount : 0,
+            userAllTransactions,
         };
 
         res.status(200).json({ message: "User Contest", data: response, success: true });
@@ -3673,7 +3506,7 @@ export const getAllCaprenterByContractorName1 = async (req, res) => {
     }
 };
 
-export const getAllCaprenterByContractorName = async (req, res) => {
+export const getAllCaprenterByContractorNameworking = async (req, res) => {
     try {
         const { businessName, name } = req.user.userObj;
         const { scannedName, scannedEmail } = req.body; // Assume scannedName and scannedEmail are passed in the request
@@ -3752,6 +3585,78 @@ export const getAllCaprenterByContractorName = async (req, res) => {
         res.json(result);
     } catch (error) {
         console.error("Error fetching carpenters and commissions:", error);
+        res.status(500).json({ message: "Internal server error" });
+    }
+};
+
+export const getAllCaprenterByContractorName = async (req, res) => {
+    try {
+        console.log("API Called: getAllCaprenterByContractorName");
+
+        // Extract contractor details from user object
+        const { businessName, name } = req.user.userObj;
+        console.log(`Contractor Name: ${name}, Business Name: ${businessName}`);
+
+        // Find all carpenters under the specified contractor
+        console.log("Fetching all carpenters under this contractor...");
+        const carpenters = await Users.find({
+            role: "CARPENTER",
+            "contractor.name": name,
+            "contractor.businessName": businessName,
+        });
+
+        console.log(`Total Carpenters Found: ${carpenters.length}`);
+
+        if (!carpenters.length) {
+            console.warn("No carpenters found under this contractor.");
+            return res.status(404).json({ message: "No carpenters found under this contractor" });
+        }
+
+        let totalCommission = 0;
+        let carpentersData = [];
+
+        for (const carpenter of carpenters) {
+            console.log(`Processing Carpenter: ${carpenter.name} (${carpenter.email})`);
+
+            // Check if the carpenter has scanned any coupons
+            console.log(`Fetching scanned coupons for ${carpenter.name}...`);
+            const scannedCoupons = await CouponsModel.find({
+                scannedUserName: carpenter.name,
+                scannedEmail: carpenter.email,
+            });
+
+            console.log(`Scanned Coupons Found: ${scannedCoupons.length}`);
+
+            let scannedCouponsCount = scannedCoupons.length;
+            let commissionEarned = scannedCoupons.reduce((sum, coupon) => {
+                let earned = Math.floor(coupon.value * 0.5); // **50% of coupon value rounded**
+                console.log(`Coupon: ${coupon.name}, Value: ${coupon.value}, Commission (Rounded): ${earned}`);
+                return sum + earned;
+            }, 0);
+            totalCommission += commissionEarned;
+
+            console.log(`Carpenter: ${carpenter.name}, Scanned Coupons: ${scannedCouponsCount}, Commission Earned: ${commissionEarned}`);
+
+            carpentersData.push({
+                name: carpenter.name,
+                email: carpenter.email,
+                phone: carpenter.phone,
+                scannedCouponsCount,
+                commissionEarned,
+            });
+        }
+
+        console.log("Final Response Data Prepared");
+        console.log(`Total Commission Earned by Contractor: ${totalCommission}`);
+
+        return res.json({
+            name,
+            businessName,
+            totalCommission,
+            carpenters: carpentersData,
+        });
+    } catch (error) {
+        console.error("Error fetching carpenters:", error);
         res.status(500).json({ message: "Internal server error" });
     }
 };
@@ -3951,9 +3856,6 @@ export const getTop50MonthlyContractors = async (req, res) => {
     }
 };
 
-
-
-
 export const getTop50MonthlyCarpenters = async (req, res) => {
     try {
         const startOfMonth = new Date(new Date().setDate(1)); // First day of the month
@@ -3983,10 +3885,7 @@ export const getTop50MonthlyCarpenters = async (req, res) => {
 
         // Fetch carpenter details from the user collection
         const carpenterIds = topCarpenters.map((carpenter) => new mongoose.Types.ObjectId(carpenter._id));
-        const carpenterDetails = await userModel.find(
-            { _id: { $in: carpenterIds }, role: "CARPENTER" },
-            "_id name phone businessName role points image"
-        );
+        const carpenterDetails = await userModel.find({ _id: { $in: carpenterIds }, role: "CARPENTER" }, "_id name phone businessName role points image");
 
         // Merge total points with carpenter details
         const result = carpenterDetails.map((carpenter) => {

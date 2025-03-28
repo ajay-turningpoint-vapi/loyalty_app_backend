@@ -74,7 +74,7 @@ const timeRestrictionMiddleware = async (req, res, next) => {
 
     // Check if the current time is blocked
     const blockedSlot = restriction.blockedTimes.find(({ startTime, endTime }) => {
-        return currentTime >= startTime && currentTime <= endTime;
+        return currentTime > startTime && currentTime < endTime;
     });
 
     if (blockedSlot) {

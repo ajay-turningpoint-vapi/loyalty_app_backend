@@ -1,3 +1,4 @@
+const mongoose = require("mongoose");
 import { pointTransactionType } from "../helpers/Constants";
 import redeemableOrderHistoryModel from "../models/redeemableOrderHistory.model";
 import RedeemableProduct from "../models/redeemableProduct.model";
@@ -23,8 +24,31 @@ export const addProduct = async (req, res) => {
 
 export const getProducts = async (req, res) => {
     try {
-        const products = await RedeemableProduct.find();
-        res.status(200).json({ products });
+        const { userId } = req.user;
+        const productsWithoutCount = await RedeemableProduct.find();
+
+        const ordersHistory = await redeemableOrderHistoryModel.aggregate([
+            {
+                $match: { user: new mongoose.Types.ObjectId(userId) },
+            },
+            {
+                $group: {
+                    _id: "$product",
+                    redemptionCount: { $sum: 1 },
+                },
+            },
+        ]);
+
+        // Convert ordersHistory to a Map for efficient lookup
+        const redemptionMap = new Map(ordersHistory.map((item) => [item._id.toString(), item.redemptionCount]));
+
+        // Add redemptionCount to products
+        const products = productsWithoutCount.map((product) => ({
+            ...product.toObject(),
+            redemptionCount: redemptionMap.get(product._id.toString()) || 0,
+        }));
+
+        res.status(200).json({ products: products });
     } catch (error) {
         res.status(500).json({ error: "Server error", details: error.message });
     }

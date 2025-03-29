@@ -8,4 +8,4 @@ const redeemableProduct = new mongoose.Schema({
     createdAt: { type: Date, default: Date.now },
 });
 
-module.exports = mongoose.model("ReedemableProduct", redeemableProduct);
+module.exports = mongoose.model("RedeemableProduct", redeemableProduct);

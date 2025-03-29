@@ -1,6 +1,6 @@
 import { pointTransactionType } from "../helpers/Constants";
 import redeemableOrderHistoryModel from "../models/redeemableOrderHistory.model";
-import ReedemableProduct from "../models/redeemableProduct.model";
+import RedeemableProduct from "../models/redeemableProduct.model";
 import User from "../models/user.model";
 import { createPointlogs } from "./pointHistory.controller";
 
@@ -12,7 +12,7 @@ export const addProduct = async (req, res) => {
             return res.status(400).json({ error: "Invalid product details" });
         }
 
-        const product = new ReedemableProduct({ name, diamond, stock, image });
+        const product = new RedeemableProduct({ name, diamond, stock, image });
         await product.save();
 
         res.status(201).json({ message: "Product added successfully", product });
@@ -23,7 +23,7 @@ export const addProduct = async (req, res) => {
 
 export const getProducts = async (req, res) => {
     try {
-        const products = await ReedemableProduct.find();
+        const products = await RedeemableProduct.find();
         res.status(200).json({ products });
     } catch (error) {
         res.status(500).json({ error: "Server error", details: error.message });
@@ -33,7 +33,7 @@ export const getProducts = async (req, res) => {
 export const editProduct = async (req, res) => {
     try {
         const { name, diamond, stock, image } = req.body;
-        const updatedProduct = await ReedemableProduct.findByIdAndUpdate(req.params.id, { name, diamond, stock, image }, { new: true, runValidators: true });
+        const updatedProduct = await RedeemableProduct.findByIdAndUpdate(req.params.id, { name, diamond, stock, image }, { new: true, runValidators: true });
 
         if (!updatedProduct) return res.status(404).json({ error: "Product not found" });
 
@@ -45,7 +45,7 @@ export const editProduct = async (req, res) => {
 
 export const deleteProduct = async (req, res) => {
     try {
-        const deletedProduct = await ReedemableProduct.findByIdAndDelete(req.params.id);
+        const deletedProduct = await RedeemableProduct.findByIdAndDelete(req.params.id);
 
         if (!deletedProduct) return res.status(404).json({ error: "Product not found" });
 
@@ -65,7 +65,7 @@ export const redeemProductold = async (req, res) => {
         }
 
         // Fetch user and product in parallel to optimize DB calls
-        const [user, product] = await Promise.all([User.findById(userId), ReedemableProduct.findById(productId)]);
+        const [user, product] = await Promise.all([User.findById(userId), RedeemableProduct.findById(productId)]);
 
         if (!user || !product) return res.status(404).json({ error: "User or Product not found" });
 
@@ -83,13 +83,13 @@ export const redeemProductold = async (req, res) => {
         }
 
         // Use transactions to ensure atomicity
-        const session = await ReedemableProduct.startSession();
+        const session = await RedeemableProduct.startSession();
         session.startTransaction();
 
         try {
             // Deduct diamonds and update stock atomically
             await User.updateOne({ _id: userId }, { $inc: { diamonds: -totalPrice } }).session(session);
-            await ReedemableProduct.updateOne({ _id: productId }, { $inc: { stock: -quantity } }).session(session);
+            await RedeemableProduct.updateOne({ _id: productId }, { $inc: { stock: -quantity } }).session(session);
 
             await session.commitTransaction();
             session.endSession();
@@ -121,7 +121,7 @@ export const redeemProduct = async (req, res) => {
         }
 
         // Fetch user and product in parallel to optimize DB calls
-        const [user, product] = await Promise.all([User.findById(userId), ReedemableProduct.findById(productId)]);
+        const [user, product] = await Promise.all([User.findById(userId), RedeemableProduct.findById(productId)]);
 
         if (!user || !product) {
             return res.status(404).json({ error: "User or Product not found" });
@@ -146,7 +146,7 @@ export const redeemProduct = async (req, res) => {
 
         // Deduct diamonds and update stock
         await User.updateOne({ _id: userId }, { $inc: { diamonds: -totalPrice } });
-        await ReedemableProduct.updateOne({ _id: productId }, { $inc: { stock: -quantity } });
+        await RedeemableProduct.updateOne({ _id: productId }, { $inc: { stock: -quantity } });
         const redemptionDescription = `Redeemed ${quantity} x ${product.name} for (${totalPrice}) diamonds (${user.name} - ${user.phone})`;
         const additionalInfo = {
             productId: productId,

@@ -37,7 +37,7 @@ const schedule = require("node-schedule");
 const { exec } = require("child_process");
 const client = require("prom-client");
 const promBundle = require("express-prom-bundle");
-import { httpRequestDuration, httpRequestsTotal, register,winstonLogger} from "./services/metricsService";
+// import { httpRequestDuration, httpRequestsTotal, register,winstonLogger} from "./services/metricsService";
 //routes
 import usersRouter from "./routes/users.routes";
 import wishlist from "./routes/wishlist.routes";
@@ -100,10 +100,10 @@ app.use("/", indexRouter);
 //     next();
 // });
 
-app.get("/metrics", async (req, res) => {
-    res.set("Content-Type", register.contentType);
-    res.end(await register.metrics());
-});
+// app.get("/metrics", async (req, res) => {
+//     res.set("Content-Type", register.contentType);
+//     res.end(await register.metrics());
+// });
 
 app.use("/users", usersRouter);
 app.use("/category", category);

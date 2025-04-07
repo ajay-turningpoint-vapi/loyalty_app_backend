@@ -35,7 +35,7 @@ import userContest from "../models/userContest";
 import reelLikesModel from "../models/reelLikes.model";
 import userModel from "../models/user.model";
 import { image } from "qr-image";
-import { httpRequestDuration, httpRequestErrors, httpRequestsTotal } from "../services/metricsService";
+// import { httpRequestDuration, httpRequestErrors, httpRequestsTotal } from "../services/metricsService";
 
 const geolib = require("geolib");
 const AWS = require("aws-sdk");
@@ -3316,7 +3316,7 @@ export const getCaprentersByContractorNameAdmin = async (req, res) => {
 };
 
 export const getAllContractors = async (req, res) => {
-    const end = httpRequestDuration.startTimer();
+    // const end = httpRequestDuration.startTimer();
     try {
         const contractors = await Users.find({ role: "CONTRACTOR" }).select("name phone businessName points").sort({ points: -1 });
         if (contractors.length === 0) {
@@ -3324,12 +3324,12 @@ export const getAllContractors = async (req, res) => {
         }
 
         res.status(200).json(contractors);
-        httpRequestsTotal.inc({ method: req.method, route: req.path, status_code: res.statusCode });
+        // httpRequestsTotal.inc({ method: req.method, route: req.path, status_code: res.statusCode });
     } catch (err) {
         res.status(500).json({ message: "Server error" });
-        httpRequestErrors.inc({ method: req.method, route: req.path });
+        // httpRequestErrors.inc({ method: req.method, route: req.path });
     }
-    end({ method: req.method, route: req.path, status_code: res.statusCode });
+    // end({ method: req.method, route: req.path, status_code: res.statusCode });
 };
 
 export const getExcelReportOfUsers = async (req, res) => {

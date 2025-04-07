@@ -51,6 +51,8 @@
 
 // module.exports = router;
 
+//without cloud front
+
 const { Router } = require("express");
 const multer = require("multer");
 const multerS3 = require("multer-s3");
@@ -71,7 +73,7 @@ const s3Client = new S3Client({
 const upload = multer({
     storage: multerS3({
         s3: s3Client,
-        bucket: process.env.AWS_S3_BUCKET_NAME,
+        bucket: process.env.AWS_S3_INPUT_BUCKET,
         key: (req, file, cb) => {
             const fileExtension = path.extname(file.originalname);
             const fileName = uuidv4() + fileExtension;
@@ -82,8 +84,6 @@ const upload = multer({
         fileSize: 20 * 1024 * 1024, // 20 MB limit
     },
 });
-
-const cloudFrontDomain = "https://d1m2dthq0rpgme.cloudfront.net";
 
 router.post("/upload", (req, res, next) => {
     if (req.file && req.file.size > 20 * 1024 * 1024) {
@@ -97,7 +97,7 @@ router.post("/upload", (req, res, next) => {
             return res.status(500).json({ error: "Internal Server Error" });
         }
 
-        const fileUrls = req.files.map((file) => `${cloudFrontDomain}/${file.key}`);
+        const fileUrls = req.files.map((file) => file.location); // Use the S3 returned URL
         res.status(200).json(fileUrls);
     });
 });

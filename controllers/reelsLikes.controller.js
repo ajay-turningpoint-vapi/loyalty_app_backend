@@ -32,6 +32,7 @@ export const likeReelsOld = async (req, res, next) => {
 };
 
 export const likeReels = async (req, res, next) => {
+   
     try {
         const { userId, reelId } = req.body;
 
@@ -60,10 +61,10 @@ export const likeReels = async (req, res, next) => {
         ]);
 
         res.status(200).json({ message: "Liked Reel Successfully", success: true });
-
     } catch (err) {
         next(err);
     }
+   
 };
 
 export const getLikeCount = async (req, res, next) => {

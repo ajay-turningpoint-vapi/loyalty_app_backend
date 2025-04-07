@@ -67,6 +67,7 @@ import {
     updateTotalPointsForAllUsers,
     getTop50MonthlyContractors,
     getTop50MonthlyCarpenters,
+    userOnline,
 } from "../controllers/users.controller";
 import { authorizeJwt } from "../middlewares/auth.middleware";
 import { sendSingleNotificationMiddleware } from "../middlewares/fcm.middleware";
@@ -112,6 +113,7 @@ router.get("/getUserStatsReport/:id", getUserStatsReport);
 router.get("/getUserPointHistoryById", getPointHistoryByUserId);
 router.get("/getUsers", authorizeJwt, getUsers);
 router.get("/getAllUsers", getAllUsers);
+router.get("/getOnlineUsersCount", userOnline);
 router.get("/getUsersAnalytics", getUsersAnalytics);
 router.get("/getUserActivityAnalysis", authorizeJwt, getUserActivityAnalysis);
 router.get("/getContestsJoinedByUser/:userId", getContestsJoinedByUser);

@@ -1,5 +1,5 @@
 import express from "express";
-import { addReels, deleteById, deleteMultipleReels, getLikedReelsByUser, getRandomReels, getReels, getReelsAnalytics, getReelsPaginated, getReelTypesCount, reelLikeUpadte, updateById, updateType } from "../controllers/reels.controller";
+import { addReels, deleteById, deleteMultipleReels, getLikedReelsByUser, getRandomReels, getReels, getReelsAnalytics, getReelsPaginated, getReelTypesCount, reelLikeUpadte, updateById, updateReelUrl, updateType } from "../controllers/reels.controller";
 import { authorizeJwt } from "../middlewares/auth.middleware";
 let router = express.Router();
 
@@ -9,13 +9,12 @@ router.get("/getReels", getReels);
 router.get("/getRandomReels", getRandomReels);
 router.get("/getReelsType", getReelTypesCount);
 router.get("/getReelsAnalytics", getReelsAnalytics);
-router.get("/getLikedReelsByUser",  getLikedReelsByUser);
+router.get("/getLikedReelsByUser", getLikedReelsByUser);
 router.get("/getReelsPaginated", authorizeJwt, getReelsPaginated);
 router.put("/updateReelsLikeCount", reelLikeUpadte);
+router.put("/update-file-urls", updateReelUrl);
 router.patch("/updateById/:id", updateById);
-
 router.patch("/updateReelCategory", updateType);
-
 router.delete("/deleteById/:id", deleteById);
 router.patch("/deleteMultipleReels", deleteMultipleReels);
 

@@ -4,6 +4,9 @@ const  UserContest  = require("../models/userContest");
 const  Prize  = require("../models/prize.model");
 const  User  = require("../models/user.model");
 const  Coupon  = require("../models/Coupons.model");
+
+
+
 async function assignPrizes() {
   try {
     await mongoose.connect(

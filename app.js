@@ -35,6 +35,9 @@ import noteRoutes from "./routes/notes.routes";
 import { format } from "date-fns";
 const schedule = require("node-schedule");
 const { exec } = require("child_process");
+const client = require("prom-client");
+const promBundle = require("express-prom-bundle");
+import { httpRequestDuration, httpRequestsTotal, register,winstonLogger} from "./services/metricsService";
 //routes
 import usersRouter from "./routes/users.routes";
 import wishlist from "./routes/wishlist.routes";
@@ -50,18 +53,25 @@ const restrictionRoutes = require("./routes/restrictionRoutes");
 const fs = require("fs");
 const app = express();
 app.use(cors());
+
+// const promMiddleware = promBundle({
+//     includeMethod: true,
+//     includePath: true,
+//     promClient: { register },
+//     // Additional options for production can be added here
+// });
+
+// // Use the metrics middleware globally
+// app.use(promMiddleware);
 const dumpFolder = path.join(__dirname, "dump");
 
 if (!fs.existsSync(dumpFolder)) {
     fs.mkdirSync(dumpFolder);
-   
 }
 mongoose.connect(CONFIG.MONGOURI, { useNewUrlParser: true, useUnifiedTopology: true }, (err) => {
     if (err) {
-     
     } else {
         console.log("connected to db at " + CONFIG.MONGOURI);
-       
     }
 });
 app.use(logger("dev"));
@@ -70,6 +80,31 @@ app.use(express.urlencoded({ extended: false, limit: "100mb", parameterLimit: 10
 app.use(cookieParser());
 app.use(express.static(path.join(__dirname, "public")));
 app.use("/", indexRouter);
+
+// app.use((req, res, next) => {
+//     const start = Date.now();
+
+//     res.on("finish", () => {
+//         const duration = (Date.now() - start) / 1000; // Convert ms to seconds
+//         httpRequestDuration.labels(req.method, req.path, res.statusCode).observe(duration);
+//         httpRequestsTotal.labels(req.method, req.path, res.statusCode).inc();
+
+//         winstonLogger.info(`[${req.method}] ${req.path} - ${res.statusCode} - ${duration}s`);
+//     });
+
+//     res.on("error", (err) => {
+//         httpRequestErrors.labels(req.method, req.path, res.statusCode || 500).inc();
+//         winstonLogger.error(`Error in request: ${req.method} ${req.path} - ${err.message}`);
+//     });
+
+//     next();
+// });
+
+app.get("/metrics", async (req, res) => {
+    res.set("Content-Type", register.contentType);
+    res.end(await register.metrics());
+});
+
 app.use("/users", usersRouter);
 app.use("/category", category);
 app.use("/product", product);
@@ -108,8 +143,7 @@ app.get("/backup", async (req, res) => {
                 console.error("Backup error:", error);
                 return res.status(500).json({ error: "Backup failed" });
             }
-          
-           
+
             console.error(stderr);
             res.json({ message: "Backup successful" });
         });
@@ -131,14 +165,12 @@ const activityLogsDeleteJob = schedule.scheduleJob("0 0 * * 0#2", async () => {
         const retentionPeriod = 14 * 24 * 60 * 60 * 1000; // 14 days in milliseconds
         const thresholdDate = new Date(Date.now() - retentionPeriod);
         const result = await activityLogsModel.deleteMany({ createdAt: { $lt: thresholdDate } });
-     
     } catch (error) {
         console.error("Error deleting activity logs:", error);
     }
 });
 
 const findInactiveUserJob = schedule.scheduleJob("0 10 * * 1", async () => {
-  
     try {
         // Calculate the timestamp for one week ago
         const oneWeekAgo = new Date();
@@ -172,7 +204,6 @@ const findInactiveUserJob = schedule.scheduleJob("0 10 * * 1", async () => {
                     const title = "We Miss You! Come Back and Win!";
                     const body = `Hey there! We've noticed that you haven't been using our app lately. Don't miss out on all the amazing offers, exciting events like lucky draws, and much more! Come back now to enjoy everything we have to offer. We can't wait to see you again!`;
                     await sendNotificationMessage(user._id, title, body);
-            
                 } catch (error) {
                     console.error("Error sending notification for user:", user._id, error);
                 }

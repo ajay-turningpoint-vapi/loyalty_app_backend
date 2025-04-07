@@ -9,10 +9,10 @@ let pointHistory = mongoose.Schema(
         description: String,
         mobileDescription: String,
         type: { type: String, enum: ["CREDIT", "DEBIT"] },
-        status: { type: String, enum: ["success", "failed", "pending"] },
+        status: { type: String, enum: ["success", "failed", "pending", "delivered"] },
         reason: String,
         additionalInfo: {
-            transferType: { type: String, enum: ["UPI", "BANK", "CASH"] },
+            transferType: { type: String, enum: ["UPI", "BANK", "CASH", "DIAMOND"] },
             transferDetails: Object,
         },
         pointType: { type: String, default: "Point" },

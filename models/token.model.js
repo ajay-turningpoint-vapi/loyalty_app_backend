@@ -5,7 +5,6 @@ let token = mongoose.Schema(
         uid: { type: String, required: true, unique: true },
         userId: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
         token: { type: String, required: true },
-        refreshToken: { type: String, required: true },
         fcmToken: { type: String, required: true },
         createdAt: { type: Date, default: Date.now }, // Token expiry
     },

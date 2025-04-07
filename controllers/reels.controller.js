@@ -2,8 +2,10 @@ import { storeFileAndReturnNameBase64 } from "../helpers/fileSystem";
 import Reels from "../models/reels.model";
 import ReelLikes from "../models/reelLikes.model";
 import ActivityLog from "../models/activityLogs.model";
+import RedeemableProduct from "../models/redeemableProduct.model";
 import mongoose from "mongoose";
-const AWS = require("aws-sdk");
+import { S3Client, DeleteObjectCommand, HeadObjectCommand } from "@aws-sdk/client-s3";
+import url from "url"; // Node.js built-in module for parsing URLs
 
 export const addReels = async (req, res, next) => {
     try {
@@ -18,7 +20,7 @@ export const addReels = async (req, res, next) => {
                 el.fileUrl = fileUrls[index];
             }
         });
-        
+
         await Reels.insertMany(req.body);
 
         res.status(200).json({ message: "Reel Successfully Created", success: true });
@@ -407,7 +409,6 @@ export const getReelsPaginated = async (req, res, next) => {
 
         const likedReelsSet = new Set(likedReelsArray);
 
-
         // Fetch random unliked reels
         let reelsArr = await Reels.aggregate([
             { $match: { _id: { $nin: likedReelsObjectIds } } }, // Exclude liked reels
@@ -601,12 +602,131 @@ export const deleteById = async (req, res, next) => {
     }
 };
 
-export const deleteMultipleReels = async (req, res, next) => {
+export const deleteMultipleReelsold = async (req, res, next) => {
     try {
         console.log(req.body, "req.body");
         await Reels.deleteMany({ _id: { $in: [...req.body.reelArr.map((el) => el._id)] } }).exec();
         res.status(200).json({ message: "Reel Deleted Successfully", success: true });
     } catch (err) {
         next(err);
+    }
+};
+
+const s3Client = new S3Client({
+    region: process.env.AWS_REGION,
+    credentials: {
+        accessKeyId: process.env.AWS_ACCESS_KEY_ID,
+        secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
+    },
+});
+
+export const deleteMultipleReels = async (req, res, next) => {
+    try {
+        const reelIds = req.body.reelArr.map((el) => el._id);
+
+        // Fetch reel documents from MongoDB
+        const reelsToDelete = await Reels.find({ _id: { $in: reelIds } });
+
+        // Extract file keys from fileUrl
+        const fileKeys = reelsToDelete
+            .map((reel) => {
+                if (!reel.fileUrl) {
+                    return null;
+                }
+                // Extract only the filename from the URL
+                const parsedUrl = url.parse(reel.fileUrl);
+                return decodeURIComponent(parsedUrl.pathname.split("/").pop());
+            })
+            .filter(Boolean); // Remove null values
+
+        // Delete reels from MongoDB
+        await Reels.deleteMany({ _id: { $in: reelIds } }).exec();
+
+        // Delete files from S3
+        if (fileKeys.length > 0) {
+            const deletePromises = fileKeys.map(async (key) => {
+                try {
+                    const deleteCommand = new DeleteObjectCommand({
+                        Bucket: process.env.AWS_S3_INPUT_BUCKET,
+                        Key: key, // Ensure only filename, not full URL
+                    });
+
+                    await s3Client.send(deleteCommand);
+
+                    // Verify deletion
+                    try {
+                        await s3Client.send(
+                            new HeadObjectCommand({
+                                Bucket: process.env.AWS_S3_INPUT_BUCKET,
+                                Key: key,
+                            })
+                        );
+                        console.error(`File still exists in S3: ${key}`);
+                    } catch (err) {
+                        if (err.name === "NotFound") {
+                            console.log(`Confirmed: File successfully deleted from S3: ${key}`);
+                        } else {
+                            console.error(`Error checking file existence: ${err.message}`);
+                        }
+                    }
+                } catch (err) {
+                    console.error(`Error deleting file from S3: ${key}, ${err.message}`);
+                }
+            });
+
+            await Promise.all(deletePromises);
+        }
+
+        res.status(200).json({ message: "Reels and files deleted successfully", success: true });
+    } catch (err) {
+        console.error("Error deleting reels:", err);
+        next(err);
+    }
+};
+
+
+
+export const updateReelUrl = async (req, res) => {
+    try {
+        const oldDomain = "https://d1m2dthq0rpgme.cloudfront.net/";
+        const newDomain = "https://turningpoint-assets.s3.ap-south-1.amazonaws.com/";
+
+        // Find all contests that have `image` with the old domain
+        const contestsToUpdate = await RedeemableProduct.find({
+            image: { $regex: `^${oldDomain}` }
+        });
+
+        if (contestsToUpdate.length === 0) {
+            return res.status(200).json({ message: "No contest image URLs needed updating" });
+        }
+
+        const updatePromises = contestsToUpdate.map(async (contest) => {
+            let updatedFields = {};
+
+            // Update image if it contains the old domain
+            if (contest.image && contest.image.startsWith(oldDomain)) {
+                updatedFields.image = contest.image.replace(oldDomain, newDomain);
+            }
+
+            // Update the contest document
+            await RedeemableProduct.updateOne({ _id: contest._id }, { $set: updatedFields });
+
+            return {
+                contestId: contest._id,
+                oldImage: contest.image,
+                newImage: updatedFields.image || contest.image
+            };
+        });
+
+        const results = await Promise.all(updatePromises);
+
+        res.status(200).json({
+            message: "Contest image URLs updated successfully",
+            updatedContests: results
+        });
+
+    } catch (error) {
+        console.error("Error updating contest image URLs:", error);
+        res.status(500).json({ message: "Internal server error" });
     }
 };

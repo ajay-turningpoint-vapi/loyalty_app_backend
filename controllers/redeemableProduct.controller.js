@@ -23,6 +23,13 @@ export const addProduct = async (req, res) => {
 };
 
 export const getProducts = async (req, res) => {
+    //   try {
+    //       const products = await RedeemableProduct.find();
+    //       res.status(200).json({ products });
+    //   } catch (error) {
+    //       res.status(500).json({ error: "Server error", details: error.message });
+    //   }
+
     try {
         const { userId } = req.user;
         const productsWithoutCount = await RedeemableProduct.find();
@@ -49,6 +56,15 @@ export const getProducts = async (req, res) => {
         }));
 
         res.status(200).json({ products: products });
+    } catch (error) {
+        res.status(500).json({ error: "Server error", details: error.message });
+    }
+};
+
+export const getProductsAdmin = async (req, res) => {
+    try {
+        const products = await RedeemableProduct.find();
+        res.status(200).json({ products });
     } catch (error) {
         res.status(500).json({ error: "Server error", details: error.message });
     }
@@ -172,21 +188,6 @@ export const redeemProduct = async (req, res) => {
         await User.updateOne({ _id: userId }, { $inc: { diamonds: -totalPrice } });
         await RedeemableProduct.updateOne({ _id: productId }, { $inc: { stock: -quantity } });
         const redemptionDescription = `Redeemed ${quantity} x ${product.name} for (${totalPrice}) diamonds (${user.name} - ${user.phone})`;
-        const additionalInfo = {
-            productId: productId,
-            productName: product.name,
-            productImage: product.image, // Assuming you have an image field
-            quantity: quantity,
-            pricePerUnit: product.diamond,
-            totalPrice: totalPrice,
-            transferType: "DIAMOND",
-            transferDetails: {
-                redeemedBy: user.name,
-                phone: user.phone,
-                redeemedBy: user.en,
-            },
-        };
-        await createPointlogs(userId, totalPrice, pointTransactionType.DEBIT, redemptionDescription, "Product", "pending", "Diamond", additionalInfo);
 
         // ✅ Add order entry
         const order = new redeemableOrderHistoryModel({
@@ -198,6 +199,13 @@ export const redeemProduct = async (req, res) => {
         });
 
         await order.save();
+        const additionalInfo = {
+            transferType: "DIAMOND",
+            transferDetails: {
+                orderId: order._id,
+            },
+        };
+        await createPointlogs(userId, totalPrice, pointTransactionType.DEBIT, redemptionDescription, "Product", "pending", "Diamond", additionalInfo);
 
         res.status(200).json({
             message: "Products redeemed successfully",

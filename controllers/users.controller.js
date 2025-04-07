@@ -34,6 +34,9 @@ import "dotenv/config";
 import userContest from "../models/userContest";
 import reelLikesModel from "../models/reelLikes.model";
 import userModel from "../models/user.model";
+import { image } from "qr-image";
+import { httpRequestDuration, httpRequestErrors, httpRequestsTotal } from "../services/metricsService";
+
 const geolib = require("geolib");
 const AWS = require("aws-sdk");
 
@@ -97,174 +100,6 @@ export const verifyOtp = async (req, res) => {
     res.status(200).json({ message: "OTP verified successfully" });
 };
 
-export const googleLoginOptimizedoLD = async (req, res) => {
-    const { idToken, fcmToken } = req.body;
-
-    if (!idToken) {
-        console.warn("[Login] ID token is missing. Returning error.");
-        return res.status(400).json({ message: "ID token is required", status: false });
-    }
-
-    try {
-        // Verify Google ID Token
-        const { uid } = await admin.auth().verifyIdToken(idToken);
-
-        const existingUser = await Users.findOne({ uid }).exec();
-
-        if (!existingUser) {
-            return res.status(200).json({ message: "User not registered", status: false });
-        }
-
-        const previousFcmToken = existingUser.fcmToken;
-
-        // Handle missing or outdated FCM token
-        if (!fcmToken || fcmToken.length < 10) {
-            console.warn(`[Login] Invalid or missing FCM token for user: ${existingUser._id}`);
-            return res.status(401).json({
-                message: "FCM token is invalid or missing. Please log in again.",
-                status: false,
-            });
-        }
-
-        console.log(`[Login] Valid FCM Token received: ${fcmToken}`);
-
-        // Generate access and refresh tokens
-        const payload = {
-            userId: existingUser._id,
-            role: existingUser.role,
-            name: existingUser.name,
-            phone: existingUser.phone,
-            email: existingUser.email,
-            uid: existingUser.uid,
-            fcmToken,
-        };
-
-        console.log("[Login] Generating access and refresh tokens...");
-        const [accessToken, refreshToken] = await Promise.all([generateAccessJwt(payload), generateRefreshJwt(payload)]);
-
-        console.log(`[Login] Tokens generated. Access Token: ${accessToken.substring(0, 10)}...`);
-
-        // Remove old tokens and store new one
-        console.log("[Login] Removing old tokens and storing new ones...");
-        await Promise.all([Token.deleteMany({ uid }), Token.create({ uid: existingUser.uid, userId: existingUser._id, token: accessToken, refreshToken, fcmToken }), existingUser.updateOne({ fcmToken })]);
-
-        console.log("[Login] Tokens updated in database successfully.");
-
-        // Send logout notification if FCM token changed
-        if (previousFcmToken && previousFcmToken !== fcmToken) {
-            console.warn(`[Login] FCM Token changed for user: ${existingUser._id}. Sending session termination notification.`);
-            const title = "Session Terminated";
-            const body = "Your account was logged in on another device.";
-            await sendNotificationMessage(existingUser._id, title, body, "session_expired");
-        }
-
-        console.log(`[Login] Login successful for user: ${existingUser._id}`);
-
-        return res.status(200).json({
-            message: "Login successful",
-            status: true,
-            token: accessToken,
-            refreshToken,
-        });
-    } catch (error) {
-        console.error("[Login] Error during Google login:", error);
-
-        const errorMessages = {
-            "auth/invalid-id-token": "Unauthorized. Invalid or expired token.",
-            "auth/id-token-expired": "Unauthorized. Invalid or expired token.",
-        };
-
-        const errorMessage = errorMessages[error.code] || "Internal Server Error";
-        console.warn(`[Login] Authentication failed: ${errorMessage}`);
-
-        return res.status(errorMessages[error.code] ? 401 : 500).json({
-            error: errorMessage,
-            status: false,
-        });
-    }
-};
-
-export const googleLoginwORKIGN = async (req, res) => {
-    const { idToken, fcmToken } = req.body;
-
-    if (!idToken) {
-        return res.status(400).json({ message: "ID token is required", status: false });
-    }
-
-    try {
-        const { uid } = await admin.auth().verifyIdToken(idToken);
-
-        const existingUser = await Users.findOne({ uid }).exec();
-        if (existingUser) {
-            const previousFcmToken = existingUser.fcmToken;
-
-            if (previousFcmToken !== fcmToken) {
-                const title = "Session Terminated";
-                const body = "Account was logged in on another device";
-                await sendNotificationMessage(existingUser._id, title, body, "session_expired");
-            }
-
-            await Token.deleteMany({ uid });
-
-            const accessToken = await generateAccessJwt({
-                userId: existingUser._id,
-                role: existingUser.role,
-                name: existingUser.name,
-                phone: existingUser.phone,
-                email: existingUser.email,
-                uid: existingUser.uid,
-                fcmToken: fcmToken,
-            });
-
-            const refreshToken = await generateRefreshJwt({
-                userId: existingUser._id,
-                role: existingUser.role,
-                name: existingUser.name,
-                phone: existingUser.phone,
-                email: existingUser.email,
-                uid: existingUser.uid,
-                fcmToken: fcmToken,
-            });
-
-            await Token.create({ uid: existingUser.uid, userId: existingUser._id, token: accessToken, refreshToken, fcmToken });
-
-            try {
-                existingUser.fcmToken = fcmToken;
-                await existingUser.save();
-            } catch (err) {
-                console.error("Error updating FCM token:", err);
-            }
-
-            if (previousFcmToken !== fcmToken) {
-                const title = "Session Terminated";
-                const body = "You have been logged out from another device";
-                await sendNotificationMessage(existingUser._id, title, body, "session_expiry_notification");
-            }
-
-            res.status(200).json({
-                message: "Login successful",
-                status: true,
-                token: accessToken,
-                refreshToken,
-            });
-        } else {
-            res.status(200).json({ message: "User not registered", status: false });
-        }
-    } catch (error) {
-        console.error("Error during Google login:", error);
-
-        let statusCode = 500;
-        let errorMessage = "Internal Server Error";
-
-        if (error.code === "auth/invalid-id-token" || error.code === "auth/id-token-expired") {
-            statusCode = 401;
-            errorMessage = "Unauthorized. Invalid or expired token.";
-        }
-
-        res.status(statusCode).json({ error: errorMessage, status: false });
-    }
-};
-
 export const googleLogin = async (req, res) => {
     const { idToken, fcmToken } = req.body;
 
@@ -292,20 +127,11 @@ export const googleLogin = async (req, res) => {
             uid: existingUser.uid,
         });
 
-        const refreshToken = await generateRefreshJwt({
-            userId: existingUser._id,
-            role: existingUser.role,
-            name: existingUser.name,
-            phone: existingUser.phone,
-            email: existingUser.email,
-            uid: existingUser.uid,
-        });
-
         // Delete old tokens only after successfully generating new ones
         await Token.deleteMany({ uid });
 
         // Save new token in the database
-        await Token.create({ uid: existingUser.uid, userId: existingUser._id, token: accessToken, refreshToken, fcmToken });
+        await Token.create({ uid: existingUser.uid, userId: existingUser._id, token: accessToken, fcmToken });
 
         // If FCM token has changed, update it and send a session termination notification
         if (existingUser.fcmToken !== fcmToken) {
@@ -327,7 +153,6 @@ export const googleLogin = async (req, res) => {
             message: "Login successful",
             status: true,
             token: accessToken,
-            refreshToken,
         });
     } catch (error) {
         console.error("Error during Google login:", error);
@@ -371,15 +196,13 @@ export const refreshToken = async (req, res) => {
             fcmToken: decoded.fcmToken,
         });
 
-        const newRefreshToken = generateRefreshJwt({ userId: decoded.userId, role: decoded.role, uid: decoded.uid, fcmToken: decoded.fcmToken });
-        await Token.findOneAndUpdate({ userId }, { token: accessToken, refreshToken: newRefreshToken }, { new: true }).exec();
+        await Token.findOneAndUpdate({ userId }, { token: accessToken }, { new: true }).exec();
 
         // Respond with the new access token
         res.status(200).json({
             message: "Token refreshed successfully",
             status: true,
             token: accessToken,
-            refreshToken: newRefreshToken,
         });
     } catch (error) {
         console.error("Error during token refresh:", error);
@@ -396,100 +219,6 @@ export const refreshToken = async (req, res) => {
         }
 
         res.status(statusCode).json({ error: errorMessage, status: false });
-    }
-};
-
-export const registerUserWorking = async (req, res, next) => {
-    try {
-        const { phone, role, idToken, fcmToken, refCode, businessName } = req.body;
-
-        const userExistCheck = await Users.findOne({ $or: [{ phone }, { email: new RegExp(`^${req.body.email}$`, "i") }] });
-        if (userExistCheck) {
-            throw new Error(`${ErrorMessages.EMAIL_EXISTS}`);
-        }
-        const decodedToken = await admin.auth().verifyIdToken(idToken);
-        const { uid, name, email, picture } = decodedToken;
-
-        let referrer, newUser;
-
-        if (refCode) {
-            referrer = await Users.findOne({ refCode });
-        }
-
-        if (role === "CONTRACTOR") {
-            const carpenter = await Users.findOne({ "notListedContractor.phone": phone, role: "CARPENTER" });
-            if (carpenter) {
-                carpenter.contractor.businessName = businessName || "Turning Point";
-                carpenter.contractor.name = name;
-                await carpenter.save();
-            }
-        }
-
-        const randomWord = generateRandomWord(6);
-        const userData = {
-            ...req.body,
-            refCode: role === "CONTRACTOR" ? randomWord : generateRandomWord(6), // Random referral code only for contractors
-            uid,
-            name,
-            email,
-            image: picture,
-            fcmToken,
-        };
-
-        if (role === "CARPENTER" && req.body.contractor.phone !== null && req.body.contractor.phone !== "") {
-            userData.notListedContractor = { name: req.body?.contractor?.name, phone: req.body?.contractor?.phone };
-            // userData.contractor = { name: "Contractor", businessName: businessName || "Turning Point"  };
-            userData.contractor = { name: req.body.contractor.name, businessName: req.body.contractor.businessName || "Turning Point", phone: req.body.contractor.phone };
-        }
-
-        newUser = await new Users(userData).save();
-        if (referrer) {
-            referrer.referrals.push(newUser._id);
-            await referrer.save();
-            const rewardValue = randomNumberGenerator();
-            const reward = await ReferralRewards.create({
-                userId: referrer._id,
-                name: "referral_reward",
-                value: rewardValue,
-                maximumNoOfUsersAllowed: 1,
-            });
-            referrer.referralRewards.push(reward._id);
-            await referrer.save();
-            try {
-                const title = "🎉आपको रिफरल स्क्रैच कार्ड मिला है!";
-                const body = "🏆अपना इनाम देखने के लिए स्क्रैच करें!";
-                await sendNotificationMessage(referrer._id, title, body, "referral");
-            } catch (error) {
-                console.error("Error sending notification for user:", referrer._id);
-            }
-        }
-        let accessToken = await generateAccessJwt({
-            userId: newUser?._id,
-            phone: newUser?.phone,
-            email: newUser?.email,
-            name: newUser?.name,
-            uid: newUser?.uid,
-            fcmToken: newUser?.fcmToken,
-        });
-        let refreshToken = await generateRefreshJwt({
-            userId: newUser?._id,
-            phone: newUser?.phone,
-            email: newUser?.email,
-            uid: newUser?.uid,
-            name: newUser?.name,
-            fcmToken: newUser?.fcmToken,
-        });
-
-        await Token.create({ uid: newUser.uid, userId: newUser._id, token: accessToken, refreshToken, fcmToken: newUser?.fcmToken });
-
-        const registrationTitle = `👏 बधाई हो, ${newUser?.name}! 🎉`;
-        const registrationBody = `🎉 Turning Point में आपका स्वागत है!`;
-        await sendNotificationMessage(newUser._id, registrationTitle, registrationBody, "New User");
-        // sendWhatsAppMessage("newuser", "918975944936", newUser.name, newUser.phone, newUser.email);
-        res.status(200).json({ message: "User Created", data: newUser, token: accessToken, status: true });
-    } catch (error) {
-        console.error("register user", error);
-        next(error);
     }
 };
 
@@ -595,15 +324,6 @@ export const registerUser = async (req, res, next) => {
             fcmToken: newUser.fcmToken,
         });
 
-        const refreshToken = await generateRefreshJwt({
-            userId: newUser._id,
-            phone: newUser.phone,
-            email: newUser.email,
-            name: newUser.name,
-            uid: newUser.uid,
-            fcmToken: newUser.fcmToken,
-        });
-
         // Save tokens
         await Token.updateOne(
             { uid: newUser.uid }, // Find token entry by uid
@@ -611,7 +331,7 @@ export const registerUser = async (req, res, next) => {
                 $set: {
                     userId: newUser._id,
                     token: accessToken,
-                    refreshToken,
+
                     fcmToken: newUser.fcmToken,
                 },
             },
@@ -1142,30 +862,11 @@ export const updateUserProfile = async (req, res, next) => {
     }
 };
 
-export const updateUserProfileAdminOld = async (req, res, next) => {
-    try {
-        // Ensure userId is provided in the request body
-        const { userId } = req.body;
-        if (!userId) {
-            return res.status(400).json({ message: "User ID is required", success: false });
-        }
-
-        // Update user with the provided data from the request body
-        const userObj = await Users.findByIdAndUpdate(userId, req.body, { new: true }).exec();
-
-        if (!userObj) {
-            return res.status(404).json({ message: "User not found", success: false });
-        }
-
-        res.status(200).json({ message: "Profile updated successfully", data: userObj, success: true });
-    } catch (err) {
-        next(err);
-    }
-};
-
 export const updateUserProfileAdmin = async (req, res, next) => {
     try {
-        const { userId, isBlocked, isActive, kycStatus, businessName, ...updateFields } = req.body;
+        const { userId, isBlocked, isActive, kycStatus, role, businessName, ...updateFields } = req.body;
+
+        console.log(req.body, "req.body");
 
         if (!userId) {
             return res.status(400).json({ message: "User ID is required", success: false });
@@ -1179,15 +880,26 @@ export const updateUserProfileAdmin = async (req, res, next) => {
 
         let updateData = { ...updateFields };
 
-        if (businessName && businessName !== userObj.businessName) {
+        const isRoleChanging = role && role !== userObj.role;
+        const isBusinessNameChanging = businessName && businessName !== userObj.businessName;
+
+        // **Case 1: If both role and businessName change, update only them & keep contractor null**
+        if (isRoleChanging && isBusinessNameChanging) {
+            updateData.role = role;
+            updateData.businessName = businessName;
+            updateData.contractor = null; // Explicitly setting contractor to null
+        }
+        // **Case 2: If only businessName changes, update contractor.businessName in all users**
+        else if (isBusinessNameChanging) {
             const previousBusinessName = userObj.businessName;
 
-            // Update businessName in all users where contractor.businessName matches the old value
-            await Users.updateMany({ "contractor.businessName": previousBusinessName }, { $set: { "contractor.businessName": businessName } });
+            await Users.updateMany(
+                { "contractor.businessName": previousBusinessName, contractor: { $ne: null } }, // Ensure contractor is not null
+                { $set: { "contractor.businessName": businessName } }
+            );
 
             updateData.businessName = businessName;
         }
-
         // Handle block/unblock toggle
         if (isBlocked !== undefined) {
             updateData.isBlocked = isBlocked;
@@ -1552,227 +1264,7 @@ export const getUsersAnalytics = async (req, res, next) => {
     }
 };
 
-export const getUserActivityAnalysis1 = async (req, res, next) => {
-    try {
-        const { startDate, endDate } = req.query;
-
-        // Parse start and end dates with default values
-        const startDateParsed = startDate ? new Date(startDate) : new Date(0); // Default to Unix epoch start date if not provided
-        const endDateParsed = endDate ? new Date(endDate) : new Date(); // Default to current date if not provided
-        // Validate date range
-        if (startDateParsed > endDateParsed) {
-            return res.status(400).json({ success: false, message: "Start date cannot be greater than end date" });
-        }
-
-        // Find users with specified criteria and projection
-        const users = await Users.find(
-            {
-                name: { $ne: "Contractor" },
-                role: { $ne: "ADMIN" },
-                createdAt: { $gte: startDateParsed, $lte: endDateParsed },
-            },
-            { name: 1, phone: 1, role: 1, isOnline: 1, email: 1, createdAt: 1, fcmToken: 1 }
-        );
-
-        // Get the user IDs
-        const userIds = users.map((user) => user._id.toString());
-
-        // Aggregate query to count reels liked by each user
-        const reelsLikeCounts = await ReelLikes.aggregate([{ $match: { userId: { $in: userIds } } }, { $group: { _id: "$userId", count: { $sum: 1 } } }]);
-
-        // Aggregate query to count contest joins and wins by each user
-        const objectIds = userIds.map((id) => new mongoose.Types.ObjectId(id));
-
-        const contestCounts = await UserContest.aggregate([
-            { $match: { userId: { $in: objectIds } } },
-            {
-                $group: {
-                    _id: "$userId",
-                    joinCount: { $sum: 1 },
-                    winCount: { $sum: { $cond: { if: { $eq: ["$status", "win"] }, then: 1, else: 0 } } },
-                },
-            },
-        ]);
-
-        // Aggregate query to count total scanned coupons by each user
-        const couponScans = await CouponsModel.aggregate([
-            { $match: { scannedEmail: { $in: users.map((user) => user.email) }, createdAt: { $gte: startDateParsed, $lte: endDateParsed } } },
-            {
-                $group: {
-                    _id: "$scannedEmail", // Assuming scannedEmail corresponds to the user
-                    scannedCount: { $sum: 1 },
-                },
-            },
-        ]);
-
-        // Create maps to store the counts of reels liked, contest joins, wins, and scanned coupons for each user
-        const reelsLikeCountMap = new Map(reelsLikeCounts.map((count) => [count._id.toString(), count.count]));
-        const contestJoinCountMap = new Map(contestCounts.map((count) => [count._id.toString(), count.joinCount]));
-        const contestWinCountMap = new Map(contestCounts.map((count) => [count._id.toString(), count.winCount]));
-        const couponScanCountMap = new Map(couponScans.map((scan) => [scan._id, scan.scannedCount])); // Map by email
-
-        let totalReelsLikeCount = 0;
-        let totalContestJoinCount = 0;
-        let totalScannedCouponCount = 0;
-
-        for (const count of reelsLikeCounts) {
-            totalReelsLikeCount += count.count;
-        }
-
-        for (const count of contestCounts) {
-            totalContestJoinCount += count.joinCount;
-        }
-
-        for (const scan of couponScans) {
-            totalScannedCouponCount += scan.scannedCount;
-        }
-
-        // Format the response with the counts of reels liked, contest joins, wins, and scanned coupons for each user
-        const formattedUsers = users.map((user) => ({
-            _id: user._id,
-            phone: user.phone,
-            name: user.name,
-            role: user.role,
-            email: user.email,
-            isOnline: user.isOnline,
-            createdAt: user.createdAt,
-            fcmToken: user.fcmToken,
-            reelsLikeCount: reelsLikeCountMap.get(user._id.toString()) || 0,
-            contestJoinCount: contestJoinCountMap.get(user._id.toString()) || 0,
-            contestWinCount: contestWinCountMap.get(user._id.toString()) || 0,
-            totalScannedCoupon: couponScanCountMap.get(user.email) || 0, // Use email to match coupons
-        }));
-
-        res.status(200).json({ success: true, data: formattedUsers, totalReelsLikeCount, totalContestJoinCount, totalScannedCouponCount });
-    } catch (error) {
-        console.error(error);
-        res.status(500).json({ success: false, message: "Failed to fetch users or get counts for the users" });
-    }
-};
-
-// export const getUserActivityAnalysis = async (req, res, next) => {
-//     try {
-//         const { startDate, endDate, search, page = 1, limit = 10, sortField, sortOrder = "desc" } = req.query;
-
-//         // Convert pagination params to numbers
-//         const pageNum = parseInt(page, 10);
-//         const limitNum = parseInt(limit, 10);
-//         const skip = (pageNum - 1) * limitNum;
-
-//         // Parse and validate dates
-//         const startDateParsed = startDate ? new Date(startDate) : new Date(0);
-//         const endDateParsed = endDate ? new Date(endDate) : new Date();
-
-//         if (startDateParsed > endDateParsed) {
-//             return res.status(400).json({ success: false, message: "Start date cannot be greater than end date" });
-//         }
-
-//         // Construct search filter
-//         const searchFilter = search
-//             ? {
-//                   $or: [{ name: { $regex: search, $options: "i" } }, { email: { $regex: search, $options: "i" } }, { phone: { $regex: search, $options: "i" } }],
-//               }
-//             : {};
-
-//         // Find users
-//         const users = await Users.find(
-//             {
-//                 name: { $ne: "Contractor" },
-//                 role: { $ne: "ADMIN" },
-//                 createdAt: { $gte: startDateParsed, $lte: endDateParsed },
-//                 ...searchFilter,
-//             },
-//             { name: 1, phone: 1, role: 1, isOnline: 1, email: 1, createdAt: 1, fcmToken: 1 }
-//         )
-//             .skip(skip)
-//             .limit(limitNum);
-
-//         // Get user IDs and emails
-//         const userIds = users.map((user) => user._id.toString());
-//         const userEmails = users.map((user) => user.email);
-
-//         if (!userIds.length) {
-//             return res.status(200).json({ success: true, data: [], totalPages: 0, currentPage: pageNum });
-//         }
-
-//         const objectIds = userIds.map((id) => new mongoose.Types.ObjectId(id));
-
-//         // Aggregate all user activity data in parallel
-//         const [reelsLikeCounts, contestCounts, couponScans] = await Promise.all([
-//             ReelLikes.aggregate([{ $match: { userId: { $in: userIds } } }, { $group: { _id: "$userId", count: { $sum: 1 } } }]),
-//             UserContest.aggregate([
-//                 { $match: { userId: { $in: objectIds } } },
-//                 {
-//                     $group: {
-//                         _id: "$userId",
-//                         joinCount: { $sum: 1 },
-//                         winCount: { $sum: { $cond: { if: { $eq: ["$status", "win"] }, then: 1, else: 0 } } },
-//                     },
-//                 },
-//             ]),
-//             CouponsModel.aggregate([{ $match: { scannedEmail: { $in: userEmails }, createdAt: { $gte: startDateParsed, $lte: endDateParsed } } }, { $group: { _id: "$scannedEmail", scannedCount: { $sum: 1 } } }]),
-//         ]);
-
-//         // Convert results into maps for quick lookup
-//         const reelsLikeCountMap = new Map(reelsLikeCounts.map((item) => [item._id.toString(), item.count]));
-//         const contestJoinCountMap = new Map(contestCounts.map((item) => [item._id.toString(), item.joinCount]));
-//         const contestWinCountMap = new Map(contestCounts.map((item) => [item._id.toString(), item.winCount]));
-//         const couponScanCountMap = new Map(couponScans.map((item) => [item._id, item.scannedCount]));
-
-//         // Format users with aggregated data
-//         let formattedUsers = users.map((user) => ({
-//             _id: user._id,
-//             phone: user.phone,
-//             name: user.name,
-//             role: user.role,
-//             email: user.email,
-//             isOnline: user.isOnline,
-//             createdAt: user.createdAt,
-//             fcmToken: user.fcmToken,
-//             reelsLikeCount: reelsLikeCountMap.get(user._id.toString()) || 0,
-//             contestJoinCount: contestJoinCountMap.get(user._id.toString()) || 0,
-//             contestWinCount: contestWinCountMap.get(user._id.toString()) || 0,
-//             totalScannedCoupon: couponScanCountMap.get(user.email) || 0,
-//         }));
-
-//         // Apply sorting
-//         if (sortField && ["totalReelsLikeCount", "totalContestJoinCount", "totalScannedCouponCount"].includes(sortField)) {
-//             const fieldMap = {
-//                 totalReelsLikeCount: "reelsLikeCount",
-//                 totalContestJoinCount: "contestJoinCount",
-//                 totalScannedCouponCount: "totalScannedCoupon",
-//             };
-
-//             const sortKey = fieldMap[sortField];
-//             formattedUsers.sort((a, b) => (sortOrder === "asc" ? a[sortKey] - b[sortKey] : b[sortKey] - a[sortKey]));
-//         }
-
-//         // Get total counts for pagination
-//         const totalUsers = await Users.countDocuments({
-//             name: { $ne: "Contractor" },
-//             role: { $ne: "ADMIN" },
-//             createdAt: { $gte: startDateParsed, $lte: endDateParsed },
-//             ...searchFilter,
-//         });
-
-//         const totalPages = Math.ceil(totalUsers / limitNum);
-
-//         res.status(200).json({
-//             success: true,
-//             data: formattedUsers,
-//             pagination: {
-//                 totalUsers,
-//                 totalPages,
-//                 currentPage: pageNum,
-//             },
-//         });
-//     } catch (error) {
-//         console.error(error);
-//         res.status(500).json({ success: false, message: "Failed to fetch user activity analysis" });
-//     }
-// };
-
-export const getUserActivityAnalysis = async (req, res, next) => {
+export const getUserActivityAnalysisold = async (req, res, next) => {
     try {
         const { startDate, endDate, search, page = 1, limit = 10, sortField, sortOrder = "desc" } = req.query;
 
@@ -1878,6 +1370,137 @@ export const getUserActivityAnalysis = async (req, res, next) => {
 
         // Get total count for pagination
         const totalUsers = users.length;
+        const totalPages = Math.ceil(totalUsers / limitNum);
+
+        res.status(200).json({
+            success: true,
+            data: paginatedUsers,
+            pagination: {
+                totalUsers,
+                totalPages,
+                currentPage: pageNum,
+            },
+        });
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ success: false, message: "Failed to fetch user activity analysis" });
+    }
+};
+
+export const getUserActivityAnalysis = async (req, res, next) => {
+    try {
+        const { startDate, endDate, search, page = 1, limit = 10, sortField, sortOrder = "desc", filterZeroActivity } = req.query;
+
+        // Convert pagination params to numbers
+        const pageNum = parseInt(page, 10);
+        const limitNum = parseInt(limit, 10);
+        const skip = (pageNum - 1) * limitNum;
+
+        // Convert filterZeroActivity to boolean
+        const filterZero = filterZeroActivity === "true";
+
+        // Parse and validate dates
+        const startDateParsed = startDate ? new Date(startDate) : new Date(0);
+        const endDateParsed = endDate ? new Date(endDate) : new Date();
+
+        if (startDateParsed > endDateParsed) {
+            return res.status(400).json({ success: false, message: "Start date cannot be greater than end date" });
+        }
+
+        // Construct search filter
+        const searchFilter = search
+            ? {
+                  $or: [{ name: { $regex: search, $options: "i" } }, { email: { $regex: search, $options: "i" } }, { phone: { $regex: search, $options: "i" } }],
+              }
+            : {};
+
+        // Sorting fields mapping
+        const fieldMap = {
+            totalReelsLikeCount: "reelsLikeCount",
+            totalContestJoinCount: "contestJoinCount",
+            totalScannedCouponCount: "totalScannedCoupon",
+        };
+
+        const isSortableField = fieldMap.hasOwnProperty(sortField);
+        const sortCriteria = isSortableField ? {} : { [sortField || "createdAt"]: sortOrder === "asc" ? 1 : -1 };
+
+        // Fetch ALL users first (to ensure correct sorting before pagination)
+        let users = await Users.find(
+            {
+                name: { $ne: "Contractor" },
+                role: { $ne: "ADMIN" },
+                createdAt: { $gte: startDateParsed, $lte: endDateParsed },
+                ...searchFilter,
+            },
+            { name: 1, phone: 1, role: 1, isOnline: 1, email: 1, createdAt: 1, fcmToken: 1 }
+        ).sort(sortCriteria); // Sorting applied BEFORE pagination
+
+        const userIds = users.map((user) => user._id.toString());
+        const userEmails = users.map((user) => user.email);
+
+        if (!userIds.length) {
+            return res.status(200).json({ success: true, data: [], totalPages: 0, currentPage: pageNum });
+        }
+
+        const objectIds = userIds.map((id) => new mongoose.Types.ObjectId(id));
+
+        // Aggregate all user activity data in parallel
+        const [reelsLikeCounts, contestCounts, couponScans] = await Promise.all([
+            ReelLikes.aggregate([{ $match: { userId: { $in: userIds } } }, { $group: { _id: "$userId", count: { $sum: 1 } } }]),
+            UserContest.aggregate([
+                { $match: { userId: { $in: objectIds } } },
+                {
+                    $group: {
+                        _id: "$userId",
+                        joinCount: { $sum: 1 },
+                        winCount: { $sum: { $cond: { if: { $eq: ["$status", "win"] }, then: 1, else: 0 } } },
+                    },
+                },
+            ]),
+            CouponsModel.aggregate([{ $match: { scannedEmail: { $in: userEmails }, createdAt: { $gte: startDateParsed, $lte: endDateParsed } } }, { $group: { _id: "$scannedEmail", scannedCount: { $sum: 1 } } }]),
+        ]);
+
+        // Convert results into maps for quick lookup
+        const reelsLikeCountMap = new Map(reelsLikeCounts.map((item) => [item._id.toString(), item.count]));
+        const contestJoinCountMap = new Map(contestCounts.map((item) => [item._id.toString(), item.joinCount]));
+        const contestWinCountMap = new Map(contestCounts.map((item) => [item._id.toString(), item.winCount]));
+        const couponScanCountMap = new Map(couponScans.map((item) => [item._id, item.scannedCount]));
+
+        // Format users with aggregated data
+        let formattedUsers = users.map((user) => ({
+            _id: user._id,
+            phone: user.phone,
+            name: user.name,
+            role: user.role,
+            email: user.email,
+            isOnline: user.isOnline,
+            createdAt: user.createdAt,
+            fcmToken: user.fcmToken,
+            reelsLikeCount: reelsLikeCountMap.get(user._id.toString()) || 0,
+            contestJoinCount: contestJoinCountMap.get(user._id.toString()) || 0,
+            contestWinCount: contestWinCountMap.get(user._id.toString()) || 0,
+            totalScannedCoupon: couponScanCountMap.get(user.email) || 0,
+        }));
+
+        // Apply filter if filterZeroActivity is true
+        if (filterZero) {
+            formattedUsers = formattedUsers.filter((user) => user.reelsLikeCount === 0 && user.contestJoinCount === 0 && user.totalScannedCoupon === 0);
+        }
+
+        // Apply sorting on aggregated fields if needed
+        if (isSortableField) {
+            formattedUsers.sort((a, b) => {
+                const aValue = a[fieldMap[sortField]] || 0;
+                const bValue = b[fieldMap[sortField]] || 0;
+                return sortOrder === "asc" ? aValue - bValue : bValue - aValue;
+            });
+        }
+
+        // Apply pagination AFTER sorting
+        const paginatedUsers = formattedUsers.slice(skip, skip + limitNum);
+
+        // Get total count for pagination
+        const totalUsers = formattedUsers.length;
         const totalPages = Math.ceil(totalUsers / limitNum);
 
         res.status(200).json({
@@ -3412,6 +3035,20 @@ export const getUserStatsReport = async (req, res, next) => {
     }
 };
 
+export const userOnline = async (req, res, next) => {
+    try {
+        const result = await Users.aggregate([
+            { $match: { isOnline: true } }, // Filter online users
+            { $count: "onlineUsers" }, // Count them
+        ]);
+
+        const onlineUsersCount = result.length > 0 ? result[0].onlineUsers : 0;
+        res.json({ onlineUsers: onlineUsersCount });
+    } catch (error) {
+        next(error);
+    }
+};
+
 export const getAllCaprenterByContractorNameOld = async (req, res) => {
     try {
         const { businessName, name } = req.user.userObj;
@@ -3641,6 +3278,7 @@ export const getAllCaprenterByContractorName = async (req, res) => {
                 name: carpenter.name,
                 email: carpenter.email,
                 phone: carpenter.phone,
+                image: carpenter.image,
                 scannedCouponsCount,
                 commissionEarned,
             });
@@ -3678,6 +3316,7 @@ export const getCaprentersByContractorNameAdmin = async (req, res) => {
 };
 
 export const getAllContractors = async (req, res) => {
+    const end = httpRequestDuration.startTimer();
     try {
         const contractors = await Users.find({ role: "CONTRACTOR" }).select("name phone businessName points").sort({ points: -1 });
         if (contractors.length === 0) {
@@ -3685,9 +3324,12 @@ export const getAllContractors = async (req, res) => {
         }
 
         res.status(200).json(contractors);
+        httpRequestsTotal.inc({ method: req.method, route: req.path, status_code: res.statusCode });
     } catch (err) {
         res.status(500).json({ message: "Server error" });
+        httpRequestErrors.inc({ method: req.method, route: req.path });
     }
+    end({ method: req.method, route: req.path, status_code: res.statusCode });
 };
 
 export const getExcelReportOfUsers = async (req, res) => {
@@ -3833,7 +3475,7 @@ export const getTop50MonthlyContractors = async (req, res) => {
         ]);
 
         if (!topContractors.length) {
-            return res.status(404).json({ message: "No Contractors found" });
+            return res.status(200).json({ message: "No Contractors found" });
         }
 
         // Fetch contractor details from the user collection
@@ -3880,7 +3522,7 @@ export const getTop50MonthlyCarpenters = async (req, res) => {
         ]);
 
         if (!topCarpenters.length) {
-            return res.status(404).json({ message: "No Carpenters found" });
+            return res.status(200).json({ message: "No Carpenters found" });
         }
 
         // Fetch carpenter details from the user collection

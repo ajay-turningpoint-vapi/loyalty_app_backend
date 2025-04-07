@@ -5,6 +5,7 @@ import Coupon from "../models/Coupons.model";
 import mongoose from "mongoose";
 import userModel from "../models/user.model";
 import { sendWhatsAppMessageForBankTransfer, sendWhatsAppMessageForUPITransfer } from "../helpers/utils";
+import redeemableOrderHistoryModel from "../models/redeemableOrderHistory.model";
 
 export const createPointlogs = async (userId, amount, type, description, mobileDescription, status = "pending", pointType = "Point", additionalInfo = {}) => {
     let historyLog = {
@@ -174,7 +175,7 @@ export const getPointHistoryold = async (req, res, next) => {
     }
 };
 
-export const getPointHistory = async (req, res, next) => {
+export const getPointHistory1 = async (req, res, next) => {
     try {
         const limit = Number(req.query.limit) || 10;
         const page = Math.max(Number(req.query.page) - 1, 0) || 0;
@@ -183,7 +184,7 @@ export const getPointHistory = async (req, res, next) => {
         if (req.query.type) query.type = req.query.type;
         if (req.query.status) query.status = req.query.status;
         if (req.query.userId) query.userId = new mongoose.Types.ObjectId(req.query.userId);
-        
+
         if (req.query.startDate || req.query.endDate) {
             query.createdAt = {};
             if (req.query.startDate) query.createdAt.$gte = new Date(req.query.startDate);
@@ -260,64 +261,102 @@ export const getPointHistory = async (req, res, next) => {
     }
 };
 
-export const getPointHistoryNWWORKING = async (req, res, next) => {
+export const getPointHistory = async (req, res, next) => {
     try {
-        const limit = req.query.limit > 0 ? Number(req.query.limit) : 10; // Default limit to 10
-        const page = req.query.page > 0 ? Number(req.query.page) - 1 : 0;
-        const { startDate, endDate } = req.query;
+        const limit = Number(req.query.limit) || 10;
+        const page = Math.max(Number(req.query.page) - 1, 0) || 0;
+        const query = {};
 
-        const count = await pointHistory.countDocuments();
-        const totalPages = Math.ceil(count / limit);
+        if (req.query.type) query.type = req.query.type;
+        if (req.query.status) query.status = req.query.status;
+        if (req.query.userId) query.userId = new mongoose.Types.ObjectId(req.query.userId);
 
-        const pointHistoryArr = await pointHistory
-            .find()
-            .sort({ createdAt: -1 }) // Sorting by most recent
-            .skip(page * limit)
-            .limit(limit)
-            .lean();
-
-        res.status(200).json({
-            message: "List of points history",
-            data: pointHistoryArr,
-            count,
-            totalPages,
-            limit,
-            page: page + 1,
-            success: true,
-        });
-    } catch (err) {
-        next(err);
-    }
-};
-
-export const getPointHistory1 = async (req, res, next) => {
-    try {
-        const limit = req.query.limit > 0 ? Number(req.query.limit) : 10; // Default limit to 10
-        const page = req.query.page > 0 ? Number(req.query.page) - 1 : 0;
-        const { startDate, endDate } = req.query;
-
-        let filter = {};
-
-        // Apply date filter if startDate or endDate is provided
-        if (startDate || endDate) {
-            filter.createdAt = {};
-            if (startDate) filter.createdAt.$gte = new Date(startDate);
-            if (endDate) {
-                let adjustedEndDate = new Date(endDate);
-                adjustedEndDate.setHours(23, 59, 59, 999); // Include the entire end date
-                filter.createdAt.$lte = adjustedEndDate;
+        if (req.query.startDate || req.query.endDate) {
+            query.createdAt = {};
+            if (req.query.startDate) query.createdAt.$gte = new Date(req.query.startDate);
+            if (req.query.endDate) {
+                let adjustedEndDate = new Date(req.query.endDate);
+                adjustedEndDate.setHours(23, 59, 59, 999);
+                query.createdAt.$lte = adjustedEndDate;
             }
         }
 
-        const count = await pointHistory.countDocuments(filter);
+        const count = await pointHistory.countDocuments(query);
         const totalPages = Math.ceil(count / limit);
 
-        const pointHistoryArr = await pointHistory
-            .find(filter)
-            .sort({ createdAt: -1 }) // Sorting by most recent
-            .skip(page * limit)
-            .limit(limit)
-            .lean();
+        let pipeline = [
+            { $match: query }, // First filter data to reduce processing
+            { $sort: { createdAt: -1 } },
+            { $skip: page * limit },
+            { $limit: limit },
+            {
+                $addFields: {
+                    userObjectId: { $toObjectId: "$userId" },
+                    orderObjectId: {
+                        $ifNull: [{ $toObjectId: "$additionalInfo.transferDetails.orderId" }, null],
+                    },
+                },
+            },
+            {
+                $lookup: {
+                    from: "users",
+                    localField: "userObjectId",
+                    foreignField: "_id",
+                    as: "user",
+                },
+            },
+            { $unwind: "$user" },
+            {
+                $lookup: {
+                    from: "redeemableorderhistories",
+                    localField: "orderObjectId",
+                    foreignField: "_id",
+                    as: "order",
+                },
+            },
+            { $unwind: { path: "$order", preserveNullAndEmptyArrays: true } },
+            {
+                $lookup: {
+                    from: "redeemableproducts",
+                    localField: "order.product",
+                    foreignField: "_id",
+                    as: "product",
+                },
+            },
+            { $unwind: { path: "$product", preserveNullAndEmptyArrays: true } },
+            {
+                $match: req.query.q ? { "user.phone": { $regex: req.query.q, $options: "i" } } : {},
+            },
+            {
+                $project: {
+                    _id: 1,
+                    transactionId: 1,
+                    userId: 1,
+                    amount: 1,
+                    description: 1,
+                    mobileDescription: 1,
+                    type: 1,
+                    status: 1,
+                    createdAt: 1,
+                    updatedAt: 1,
+                    reason: 1,
+                    additionalInfo: 1,
+                    "user.name": 1,
+                    "user.email": 1,
+                    "user.phone": 1,
+                    "order._id": 1,
+                    "order.status": 1,
+                    "order.quantity": 1,
+                    "order.totalPrice": 1,
+                    "product._id": 1,
+                    "product.name": 1,
+                    "product.image": 1,
+                    "product.diamond": 1,
+                },
+            },
+        ];
+
+        const pointHistoryArr = await pointHistory.aggregate(pipeline);
 
         res.status(200).json({
             message: "List of points history",
@@ -438,34 +477,77 @@ export const pointsRedeem = async (req, res, next) => {
         next(err);
     }
 };
-export const updatePointHistoryStatus = async (req, res, next) => {
+
+export const updatePointHistoryStatusold = async (req, res, next) => {
     try {
         let pointHistoryObj = await pointHistory.findById(req.params.id).exec();
         if (!pointHistoryObj) {
             throw new Error("Transaction Not found");
         }
-
         if (req.body.status == "reject") {
             let userObj = await userModel.findById(pointHistoryObj.userId).exec();
             if (!userObj) {
                 throw new Error("User not found");
             }
-            await userModel.findByIdAndUpdate(userObj._id, { $set: { points: userObj.points + pointHistoryObj.amount } }).exec();
+            await userModel.findByIdAndUpdate(userObj._id, { $set: { diamonds: userObj.diamonds + pointHistoryObj.amount } }).exec();
             let mobileDescription = "Rejection";
             await createPointlogs(
                 pointHistoryObj.userId,
                 pointHistoryObj.amount,
                 pointTransactionType.CREDIT,
-                `Points returned due to rejection of transaction by admin because ${req.body.reason}`,
+                `Diamonds returned due to rejection of transaction by admin because ${req.body.reason}`,
                 mobileDescription,
                 "success",
                 req.body.reason
             );
         }
-
         await pointHistory.findByIdAndUpdate(req.params.id, { status: req.body.status, reason: req.body.reason }).exec();
 
         res.status(201).json({ message: "Transaction Status Updated Successfully", success: true });
+    } catch (err) {
+        next(err);
+    }
+};
+
+export const updatePointHistoryStatus = async (req, res, next) => {
+    try {
+        const { id } = req.params;
+        const { status, reason } = req.body;
+
+        let pointHistoryObj = await pointHistory.findById(id).exec();
+        if (!pointHistoryObj) {
+            return res.status(404).json({ message: "Transaction Not Found", success: false });
+        }
+
+        // Extract orderId from additionalInfo
+        const orderId = pointHistoryObj?.additionalInfo?.transferDetails?.orderId;
+        if (!orderId) {
+            return res.status(400).json({ message: "Order ID Not Found", success: false });
+        }
+
+        if (status === "reject") {
+            let userObj = await userModel.findById(pointHistoryObj.userId).exec();
+            if (!userObj) {
+                return res.status(404).json({ message: "User Not Found", success: false });
+            }
+
+            // Refund diamonds to the user
+            await userModel.findByIdAndUpdate(userObj._id, { $inc: { diamonds: pointHistoryObj.amount } }, { new: true }).exec();
+
+            let mobileDescription = "Rejection";
+            await createPointlogs(pointHistoryObj.userId, pointHistoryObj.amount, pointTransactionType.CREDIT, `Diamonds returned due to rejection of transaction by admin because ${reason}`, mobileDescription, "success", reason);
+
+            // Update the order status to "reject"
+            await redeemableOrderHistoryModel.findByIdAndUpdate(orderId, { status: "reject" }).exec();
+        } else if (status === "delivered") {
+            // Update the order status to "delivered"
+            await redeemableOrderHistoryModel.findByIdAndUpdate(orderId, { status: "delivered", deliveredAt: new Date() }).exec();
+        }
+
+        // Update transaction status and reason
+        await pointHistory.findByIdAndUpdate(id, { status, reason }).exec();
+
+        res.status(200).json({ message: "Transaction & Order Status Updated Successfully", success: true });
     } catch (err) {
         next(err);
     }

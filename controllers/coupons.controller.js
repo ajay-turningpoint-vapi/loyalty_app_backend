@@ -923,7 +923,7 @@ const handleContractorPoints = async (phone, carpenterId, points, couponName, Co
     const ContractorObj = await Users.findOne({ phone, role: "CONTRACTOR" }).lean();
 
     const contractorPoints = Math.floor(points * 0.5);
-    const contractorPointDescription = `Earned ${contractorPoints} points (50% of coupon points to (Contractor: ${ContractorObj?.name})) from ${couponName} ${CouponObj.name} ${CouponObj.productName}.`;
+    const contractorPointDescription = `Earned ${contractorPoints} points (50% of coupon points to (Contractor: ${ContractorObj?.name}) from ${couponName} ${CouponObj.name} ${CouponObj.productName}.`;
 
     if (ContractorObj) {
         await Users.findByIdAndUpdate(ContractorObj._id, { $inc: { points: contractorPoints, totalPointsEarned: contractorPoints } });

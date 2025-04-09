@@ -4,61 +4,8 @@ const { default: userModel } = require("../models/user.model");
 const { query } = require("express");
 const { default: reelsModel } = require("../models/reels.model");
 
-exports.sendNotificationold = async (req, res) => {
-    const { title, message, imageUrl, role } = req.body;
-    if (!title || !message || !imageUrl) {
-        return res.status(400).json({ error: "All fields are required" });
-    }
-    try {
-        // Fetch user tokens from the database based on the role, excluding users with the name "Admin User" or "Contractor"
-        const query = {
-            name: { $nin: ["Admin User", "Contractor"] },
-        };
-
-        // Add the role condition only if it's provided
-        if (role) {
-            query.role = role;
-        }
-
-        // Fetch user tokens from the database based on the constructed query
-        const users = await userModel.find(query);
-        const tokens = users.map((user) => user.fcmToken).filter(Boolean); // Ensure only valid tokens
-        // Prepare the notification payload
-        const payload = {
-            notification: {
-                title,
-                body: message,
-                image: imageUrl,
-            },
-            data: {
-                type: "promotion",
-            },
-        };
-
-        // Send notifications to all filtered tokens
-        const response = await Promise.all(
-            tokens.map((token) =>
-                admin.messaging().send({
-                    token,
-                    notification: payload.notification,
-                    data: payload.data,
-                })
-            )
-        );
-
-        res.status(200).json({
-            message: "Promotion sent successfully to users",
-            // firebaseResponse: response,
-        });
-    } catch (error) {
-        console.error("Error sending notification:", error);
-        res.status(500).json({ error: "Failed to send notification" });
-    }
-};
-
 exports.sendNotification = async (req, res) => {
     const { title, message, imageUrl, videoPromotion, role } = req.body;
-    console.log("Request body:", req.body); // Debugging
 
     if (!title || !message || (!imageUrl && !videoPromotion)) {
         return res.status(400).json({ error: "Title, message, and either imageUrl or videoPromotion are required" });
@@ -81,10 +28,10 @@ exports.sendNotification = async (req, res) => {
             notification: {
                 title,
                 body: message,
-                ...(imageUrl && { image: imageUrl }) // ✅ Only include image if `imageUrl` exists
+                ...(imageUrl && { image: imageUrl }), // ✅ Only include image if `imageUrl` exists
             },
             data: {
-                type: "promotion",
+                type: videoPromotion ? "videoPromotion" : "promotion",
                 mediaType: videoPromotion ? "video" : "image",
                 mediaUrl: String(mediaUrl),
                 videoPromotion: videoPromotion ? JSON.stringify(videoPromotion) : "",
@@ -112,10 +59,7 @@ exports.sendNotification = async (req, res) => {
 
         // Remove invalid tokens from the database
         if (invalidTokens.length > 0) {
-            await userModel.updateMany(
-                { fcmToken: { $in: invalidTokens } },
-                { $unset: { fcmToken: "" } }
-            );
+            await userModel.updateMany({ fcmToken: { $in: invalidTokens } }, { $unset: { fcmToken: "" } });
             console.log(`Removed ${invalidTokens.length} invalid tokens.`);
         }
 
@@ -128,29 +72,7 @@ exports.sendNotification = async (req, res) => {
     }
 };
 
-
-
 // CREATE: Send a new promotion
-exports.createPromotionIOld = async (req, res) => {
-    const { title, message, imageUrl } = req.body;
-
-    if (!title || !imageUrl) {
-        return res.status(400).json({ error: "Title and imageUrl are required" });
-    }
-
-    try {
-        const newPromotion = new Promotion({ title, message, imageUrl });
-        await newPromotion.save();
-
-        res.status(201).json({
-            message: "Promotion created successfully",
-            promotion: newPromotion,
-        });
-    } catch (error) {
-        console.error("Error creating promotion:", error);
-        res.status(500).json({ error: "Failed to create promotion" });
-    }
-};
 
 exports.createPromotion = async (req, res) => {
     const { title, message, imageUrl, videoUrl } = req.body;
@@ -169,7 +91,7 @@ exports.createPromotion = async (req, res) => {
                 fileUrl: videoUrl,
                 isVideo: true,
                 points: 90,
-                type: "Promotion",
+                type: "videoPromotion",
             });
 
             const savedReel = await newReel.save();
@@ -191,7 +113,6 @@ exports.createPromotion = async (req, res) => {
         res.status(500).json({ error: "Failed to create promotion" });
     }
 };
-
 
 // READ: Get all promotions
 exports.getAllPromotions = async (req, res) => {
@@ -221,9 +142,9 @@ exports.getPromotionById = async (req, res) => {
 };
 
 // UPDATE: Update a promotion by ID
-exports.updatePromotion = async (req, res) => {
+exports.updatePromotionold = async (req, res) => {
     const { id } = req.params;
-    const { title, message, imageUrl } = req.body;
+    const { title, message, imageUrl, videoUrl } = req.body;
 
     try {
         const promotion = await Promotion.findByIdAndUpdate(id, { title, message, imageUrl }, { new: true, runValidators: true });
@@ -241,6 +162,57 @@ exports.updatePromotion = async (req, res) => {
         res.status(500).json({ error: "Failed to update promotion" });
     }
 };
+
+exports.updatePromotion = async (req, res) => {
+    const { id } = req.params;
+    const {  title, message, imageUrl, videoUrl } = req.body;
+
+    if (!id) {
+        return res.status(400).json({ error: "Promotion ID is required" });
+    }
+
+    try {
+        const promotion = await Promotion.findById(id);
+        if (!promotion) {
+            return res.status(404).json({ error: "Promotion not found" });
+        }
+
+        // Update basic fields
+        if (title) promotion.title = title;
+        if (message) promotion.message = message;
+
+        // Handle video update
+        if (videoUrl) {
+            const newReel = new reelsModel({
+                name: title || promotion.title,
+                fileUrl: videoUrl,
+                isVideo: true,
+                points: 90,
+                type: "Promotion",
+            });
+
+            const savedReel = await newReel.save();
+            promotion.videoPromotion = savedReel.toObject();
+            promotion.imageUrl = null; // 🔄 Ensure image is removed
+        } 
+        // Handle image update (only if no videoUrl)
+        else if (imageUrl) {
+            promotion.imageUrl = imageUrl;
+            promotion.videoPromotion = null; // 🔄 Ensure video is removed
+        }
+
+        const updatedPromotion = await promotion.save();
+
+        res.status(200).json({
+            message: "Promotion updated successfully",
+            promotion: updatedPromotion,
+        });
+    } catch (error) {
+        console.error("Error updating promotion:", error);
+        res.status(500).json({ error: "Failed to update promotion" });
+    }
+};
+
 
 // DELETE: Delete a promotion by ID
 exports.deletePromotion = async (req, res) => {

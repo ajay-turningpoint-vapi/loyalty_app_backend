@@ -394,7 +394,7 @@ export const getReelsPaginated3x = async (req, res, next) => {
     }
 };
 
-export const getReelsPaginated = async (req, res, next) => {
+export const getReelsPaginatedUsingMap = async (req, res, next) => {
     try {
         if (!req.user) {
             return res.status(401).json({ message: "Unauthorized" });
@@ -447,6 +447,104 @@ export const getReelsPaginated = async (req, res, next) => {
             success: true,
             limit,
             hasMore: reelsArr.length === limit, // Check if more reels are available
+        });
+    } catch (err) {
+        console.error("Error in getReelsPaginated:", err);
+        next(err);
+    }
+};
+
+export const getReelsPaginated = async (req, res, next) => {
+    try {
+        if (!req.user) {
+            return res.status(401).json({ message: "Unauthorized" });
+        }
+
+        const limit = Math.max(parseInt(req.query.limit) || 10, 1);
+        const userId = req.user.userId;
+        const userObjectId = new mongoose.Types.ObjectId(userId);
+
+        // 1. Match unliked reels first and flag them
+        let reelsArr = await Reels.aggregate([
+            {
+                $lookup: {
+                    from: "reellikes",
+                    let: { reelId: "$_id" },
+                    pipeline: [
+                        {
+                            $match: {
+                                $expr: {
+                                    $and: [{ $eq: ["$userId", userId] }, { $eq: ["$reelId", "$$reelId"] }],
+                                },
+                            },
+                        },
+                    ],
+                    as: "userLiked",
+                },
+            },
+            {
+                $addFields: {
+                    likedByCurrentUser: {
+                        $gt: [{ $size: "$userLiked" }, 0],
+                    },
+                },
+            },
+            {
+                $match: {
+                    likedByCurrentUser: false, // only unliked
+                },
+            },
+            { $sample: { size: limit } },
+        ]);
+
+        // 2. If not enough, get some liked reels
+        if (reelsArr.length < limit) {
+            const remaining = limit - reelsArr.length;
+
+            const likedFallback = await Reels.aggregate([
+                {
+                    $lookup: {
+                        from: "reellikes",
+                        let: { reelId: "$_id" },
+                        pipeline: [
+                            {
+                                $match: {
+                                    $expr: {
+                                        $and: [{ $eq: ["$userId", userId] }, { $eq: ["$reelId", "$$reelId"] }],
+                                    },
+                                },
+                            },
+                        ],
+                        as: "userLiked",
+                    },
+                },
+                {
+                    $addFields: {
+                        likedByCurrentUser: {
+                            $gt: [{ $size: "$userLiked" }, 0],
+                        },
+                    },
+                },
+                {
+                    $match: {
+                        likedByCurrentUser: true,
+                    },
+                },
+                { $sample: { size: remaining } },
+            ]);
+
+            reelsArr = [...reelsArr, ...likedFallback];
+        }
+
+        // Async activity logging (non-blocking)
+        ActivityLog.create({ userId, type: "Watching Reels" }).catch((err) => console.error("Activity log error:", err));
+
+        res.status(200).json({
+            message: "Reels Found",
+            data: reelsArr,
+            success: true,
+            limit,
+            hasMore: reelsArr.length === limit,
         });
     } catch (err) {
         console.error("Error in getReelsPaginated:", err);
@@ -684,8 +782,6 @@ export const deleteMultipleReels = async (req, res, next) => {
     }
 };
 
-
-
 export const updateReelUrl = async (req, res) => {
     try {
         const oldDomain = "https://d1m2dthq0rpgme.cloudfront.net/";
@@ -693,7 +789,7 @@ export const updateReelUrl = async (req, res) => {
 
         // Find all contests that have `image` with the old domain
         const contestsToUpdate = await RedeemableProduct.find({
-            image: { $regex: `^${oldDomain}` }
+            image: { $regex: `^${oldDomain}` },
         });
 
         if (contestsToUpdate.length === 0) {
@@ -714,7 +810,7 @@ export const updateReelUrl = async (req, res) => {
             return {
                 contestId: contest._id,
                 oldImage: contest.image,
-                newImage: updatedFields.image || contest.image
+                newImage: updatedFields.image || contest.image,
             };
         });
 
@@ -722,9 +818,8 @@ export const updateReelUrl = async (req, res) => {
 
         res.status(200).json({
             message: "Contest image URLs updated successfully",
-            updatedContests: results
+            updatedContests: results,
         });
-
     } catch (error) {
         console.error("Error updating contest image URLs:", error);
         res.status(500).json({ message: "Internal server error" });

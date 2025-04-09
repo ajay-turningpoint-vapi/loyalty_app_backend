@@ -1,6 +1,7 @@
 import jwt from "jsonwebtoken";
 import User from "../models/user.model";
 import Token from "../models/token.model";
+
 export const authorizeJwt = async (req, res, next) => {
     const authorization = req.headers["authorization"];
     const token = authorization?.split("Bearer ")[1];
@@ -14,26 +15,36 @@ export const authorizeJwt = async (req, res, next) => {
 
         // Check if the token exists in the database
         const storedToken = await Token.findOne({ uid: decoded.uid, token }).exec();
-       
+
         if (!storedToken) {
-            return res.status(401).json({ message: "Access denied. Invalid or expired token." });
+            // return res.status(401).json({ message: "Access denied. Invalid or expired token." });
+
+            console.log("Token not found in database, but proceeding with request.");
         }
 
         // Fetch user object and check if active
         const userObj = await User.findById(decoded.userId).exec();
-        
+
         // if (!userObj || !userObj.isActive) {
-        //     return res.status(202).json({ message: "Admin locked you out of the app",valid:true}); 
+        //     return res.status(202).json({ message: "Admin locked you out of the app",valid:true});
         // }
 
         req.user.userObj = userObj;
         next();
     } catch (err) {
         console.log(err);
+        try {
+            const payload = jwt.decode(token);
+            if (payload?.uid) {
+                await Token.deleteOne({ uid: payload.uid, token });
+                console.log("Invalid/expired token deleted from database.");
+            }
+        } catch (decodeErr) {
+            console.log("Failed to decode token:", decodeErr?.message || decodeErr);
+        }
         res.status(401).json({ message: "Invalid token" });
     }
 };
-
 
 export const setUserAndUserObj = async (req, res, next) => {
     let authorization = req.headers["authorization"];

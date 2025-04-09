@@ -144,7 +144,7 @@ export const googleLogin = async (req, res) => {
                 await sendNotificationMessage(existingUser._id, title, body, "session_expired");
             } catch (err) {
                 console.error("Error updating FCM token:", err);
-                return res.status(500).json({ message: "Failed to update FCM token", status: false });
+                // return res.status(500).json({ message: "Failed to update FCM token", status: false });
             }
         }
 
@@ -157,15 +157,16 @@ export const googleLogin = async (req, res) => {
     } catch (error) {
         console.error("Error during Google login:", error);
 
-        let statusCode = 500;
-        let errorMessage = "Internal Server Error";
-
-        if (error.code === "auth/invalid-id-token" || error.code === "auth/id-token-expired") {
-            statusCode = 401;
-            errorMessage = "Unauthorized. Invalid or expired token.";
+        try {
+            const decoded = admin.auth().verifyIdToken(idToken, true);
+            if (decoded?.uid) {
+                await Token.deleteMany({ uid: decoded.uid });
+                console.log("Deleted token from DB due to login error.");
+            }
+        } catch (decodeErr) {
+            console.error("Failed to decode UID during token cleanup:", decodeErr.message);
         }
-
-        res.status(statusCode).json({ error: errorMessage, status: false });
+        // res.status(statusCode).json({ error: errorMessage, status: false });
     }
 };
 
@@ -864,9 +865,7 @@ export const updateUserProfile = async (req, res, next) => {
 
 export const updateUserProfileAdmin = async (req, res, next) => {
     try {
-        const { userId, isBlocked, isActive, kycStatus, role, businessName, ...updateFields } = req.body;
-
-        console.log(req.body, "req.body");
+        const { userId, isBlocked, isActive, kycStatus, role, businessName, contractor, ...updateFields } = req.body;
 
         if (!userId) {
             return res.status(400).json({ message: "User ID is required", success: false });
@@ -879,34 +878,38 @@ export const updateUserProfileAdmin = async (req, res, next) => {
         }
 
         let updateData = { ...updateFields };
+        const isBusinessNameChanging = businessName !== undefined && businessName !== userObj.businessName;
 
-        const isRoleChanging = role && role !== userObj.role;
-        const isBusinessNameChanging = businessName && businessName !== userObj.businessName;
+        if (role === "CARPENTER" && isBusinessNameChanging) {
+            updateData.role = role;
+            updateData.businessName = null;
+            // updateData.contractor = null;
+            updateData.contractor = {
+                businessName: contractor.businessName || "",
+                name: contractor.name || "",
+                phone: contractor.phone || "",
+            };
+        }
 
-        // **Case 1: If both role and businessName change, update only them & keep contractor null**
-        if (isRoleChanging && isBusinessNameChanging) {
+        if (role === "CONTRACTOR" && isBusinessNameChanging) {
             updateData.role = role;
             updateData.businessName = businessName;
-            updateData.contractor = null; // Explicitly setting contractor to null
-        }
-        // **Case 2: If only businessName changes, update contractor.businessName in all users**
-        else if (isBusinessNameChanging) {
+            updateData.contractor = null;
+        } else if (isBusinessNameChanging) {
             const previousBusinessName = userObj.businessName;
 
-            await Users.updateMany(
-                { "contractor.businessName": previousBusinessName, contractor: { $ne: null } }, // Ensure contractor is not null
-                { $set: { "contractor.businessName": businessName } }
-            );
+            await Users.updateMany({ "contractor.businessName": previousBusinessName, contractor: { $ne: null } }, { $set: { "contractor.businessName": businessName } });
 
             updateData.businessName = businessName;
         }
+
         // Handle block/unblock toggle
         if (isBlocked !== undefined) {
             updateData.isBlocked = isBlocked;
         }
 
         // Handle user active/inactive status
-        if (isActive !== undefined) {
+        if (isActive !== undefined && isActive !== userObj.isActive) {
             updateData.isActive = isActive;
             updateData.isActiveDate = isActive ? new Date() : null;
 
@@ -1867,6 +1870,77 @@ export const getUserByIdOld = async (req, res, next) => {
             } else {
                 userObj.autoJoinStatus = "No contest ID provided";
             }
+        }
+
+        res.status(200).json({ message: "User found", data: userObj, success: true });
+    } catch (error) {
+        console.error(error);
+        next(error);
+    }
+};
+
+export const getUserByIdNotWellOptimized = async (req, res, next) => {
+    try {
+        let userObj = await Users.findById(req.params.id).lean().exec();
+        if (!userObj) {
+            return res.status(404).json({ message: "User not found", success: false });
+        }
+
+        // Fetch contest participation details
+        const contestParticipationCount = await UserContest.find({ userId: userObj._id }).count().exec();
+        const contestsParticipatedInCount = await UserContest.find({ userId: userObj._id }).distinct("contestId").exec();
+        const contestUniqueWonCount = await UserContest.find({ userId: userObj._id, status: "win" }).distinct("contestId").exec();
+        const contestWonCount = await UserContest.find({ userId: userObj._id, status: "win" }).count().exec();
+
+        // Add contest-related data to the user object
+        userObj.contestParticipationCount = contestParticipationCount;
+        userObj.contestsParticipatedInCount = contestsParticipatedInCount.length;
+        userObj.contestWonCount = contestWonCount;
+        userObj.contestUniqueWonCount = contestUniqueWonCount?.length || 0;
+
+        // Only allow auto-join if the user is active
+        if (userObj.isActive === true) {
+            if (req.query.contestId && req.query.contestId !== "null") {
+                const contestId = req.query.contestId;
+
+                try {
+                    // Fetch the contest by the provided contestId
+                    const contestObj = await Contest.findById(contestId).exec();
+
+                    if (!contestObj) {
+                        userObj.autoJoinStatus = "Contest not found";
+                    } else {
+                        // Check if the user has enough points to join the contest
+                        const requiredPoints = contestObj.points || 0; // Default to 0 if no points specified
+
+                        if (userObj.points >= requiredPoints) {
+                            const joinCount = Math.floor(userObj.points / requiredPoints); // Calculate how many times user can join
+
+                            for (let i = 0; i < joinCount; i++) {
+                                await autoJoinContest(contestId, userObj._id);
+                            }
+
+                            // Deduct points after joining the contest
+                            const totalPointsUsed = joinCount * requiredPoints;
+                            userObj.points -= totalPointsUsed;
+                            await Users.updateOne({ _id: userObj._id }, { points: userObj.points });
+
+                            // Refresh user data
+                            userObj = await Users.findById(req.params.id).lean().exec();
+                            userObj.autoJoinStatus = `User auto-joined the contest ${joinCount} times`;
+                        } else {
+                            userObj.autoJoinStatus = `Not enough points to join the contest. Required: ${requiredPoints}, Available: ${userObj.points}`;
+                        }
+                    }
+                } catch (error) {
+                    userObj.autoJoinStatus = "Auto-join failed: " + error.message;
+                    console.error(userObj.autoJoinStatus);
+                }
+            } else {
+                userObj.autoJoinStatus = "No contest ID provided";
+            }
+        } else {
+            console.log("User is not active; skipping auto-join logic.");
         }
 
         res.status(200).json({ message: "User found", data: userObj, success: true });
@@ -3228,21 +3302,14 @@ export const getAllCaprenterByContractorNameworking = async (req, res) => {
 
 export const getAllCaprenterByContractorName = async (req, res) => {
     try {
-        console.log("API Called: getAllCaprenterByContractorName");
-
         // Extract contractor details from user object
         const { businessName, name } = req.user.userObj;
-        console.log(`Contractor Name: ${name}, Business Name: ${businessName}`);
 
-        // Find all carpenters under the specified contractor
-        console.log("Fetching all carpenters under this contractor...");
         const carpenters = await Users.find({
             role: "CARPENTER",
             "contractor.name": name,
             "contractor.businessName": businessName,
         });
-
-        console.log(`Total Carpenters Found: ${carpenters.length}`);
 
         if (!carpenters.length) {
             console.warn("No carpenters found under this contractor.");
@@ -3253,26 +3320,18 @@ export const getAllCaprenterByContractorName = async (req, res) => {
         let carpentersData = [];
 
         for (const carpenter of carpenters) {
-            console.log(`Processing Carpenter: ${carpenter.name} (${carpenter.email})`);
-
-            // Check if the carpenter has scanned any coupons
-            console.log(`Fetching scanned coupons for ${carpenter.name}...`);
             const scannedCoupons = await CouponsModel.find({
                 scannedUserName: carpenter.name,
                 scannedEmail: carpenter.email,
             });
 
-            console.log(`Scanned Coupons Found: ${scannedCoupons.length}`);
-
             let scannedCouponsCount = scannedCoupons.length;
             let commissionEarned = scannedCoupons.reduce((sum, coupon) => {
                 let earned = Math.floor(coupon.value * 0.5); // **50% of coupon value rounded**
-                console.log(`Coupon: ${coupon.name}, Value: ${coupon.value}, Commission (Rounded): ${earned}`);
+
                 return sum + earned;
             }, 0);
             totalCommission += commissionEarned;
-
-            console.log(`Carpenter: ${carpenter.name}, Scanned Coupons: ${scannedCouponsCount}, Commission Earned: ${commissionEarned}`);
 
             carpentersData.push({
                 name: carpenter.name,
@@ -3280,18 +3339,17 @@ export const getAllCaprenterByContractorName = async (req, res) => {
                 phone: carpenter.phone,
                 image: carpenter.image,
                 scannedCouponsCount,
-                commissionEarned,
+                points: commissionEarned,
             });
         }
 
-        console.log("Final Response Data Prepared");
-        console.log(`Total Commission Earned by Contractor: ${totalCommission}`);
-
         return res.json({
-            name,
-            businessName,
-            totalCommission,
-            carpenters: carpentersData,
+            data: {
+                name,
+                businessName,
+                totalCommission,
+                allCarpenters: carpentersData,
+            },
         });
     } catch (error) {
         console.error("Error fetching carpenters:", error);

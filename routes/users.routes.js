@@ -95,7 +95,7 @@ router.patch("/updateUserKycStatus/:id", updateUserKycStatus);
 router.patch("/updateUserBulk", authorizeJwt, bulkActivateAllUsers);
 router.patch("/updateUserOnlineStatus", authorizeJwt, updateUserOnlineStatus);
 router.patch("/update-profile", authorizeJwt, updateUserProfile);
-router.patch("/update-profile-admin", authorizeJwt, updateUserProfileAdmin);
+router.patch("/update-profile-admin", updateUserProfileAdmin);
 router.patch("/update-profile-image", authorizeJwt, updateUserProfileImage);
 router.get("/getAllContractors", getAllContractors);
 router.get("/getTopContractors", getTop50Contractors);
@@ -104,7 +104,6 @@ router.get("/getTopCarpenters", getTop50Carpenters);
 router.get("/getTopMonthlyCarpenters", getTop50MonthlyCarpenters);
 router.get("/getUserCreditHistory", getUserCreditHistory);
 router.put("/update-all-users-totalpoints", updateTotalPointsForAllUsers);
-
 router.get("/getExcelReportOfUser", getExcelReportOfUsers);
 router.post("/getContractorUsingPhone", getContractorUsingPhone);
 router.get("/getAllCarpentersByContractorName", authorizeJwt, getAllCaprenterByContractorName);

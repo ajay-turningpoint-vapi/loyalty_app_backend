@@ -2,7 +2,7 @@ import { storeFileAndReturnNameBase64 } from "../helpers/fileSystem";
 import Reels from "../models/reels.model";
 import ReelLikes from "../models/reelLikes.model";
 import ActivityLog from "../models/activityLogs.model";
-import RedeemableProduct from "../models/redeemableProduct.model";
+import Users from "../models/user.model";
 import mongoose from "mongoose";
 import { S3Client, DeleteObjectCommand, HeadObjectCommand } from "@aws-sdk/client-s3";
 import url from "url"; // Node.js built-in module for parsing URLs
@@ -782,46 +782,57 @@ export const deleteMultipleReels = async (req, res, next) => {
     }
 };
 
+
+
 export const updateReelUrl = async (req, res) => {
     try {
         const oldDomain = "https://d1m2dthq0rpgme.cloudfront.net/";
         const newDomain = "https://turningpoint-assets.s3.ap-south-1.amazonaws.com/";
 
-        // Find all contests that have `image` with the old domain
-        const contestsToUpdate = await RedeemableProduct.find({
-            image: { $regex: `^${oldDomain}` },
+        // Find all users where any of the fields contain the old domain
+        const usersToUpdate = await Users.find({
+            $or: [
+                { image: { $regex: `^${oldDomain}` } },
+                { idFrontImage: { $regex: `^${oldDomain}` } },
+                { idBackImage: { $regex: `^${oldDomain}` } }
+            ]
         });
 
-        if (contestsToUpdate.length === 0) {
-            return res.status(200).json({ message: "No contest image URLs needed updating" });
+        if (usersToUpdate.length === 0) {
+            return res.status(200).json({ message: "No user image URLs needed updating" });
         }
 
-        const updatePromises = contestsToUpdate.map(async (contest) => {
+        const updatePromises = usersToUpdate.map(async (user) => {
             let updatedFields = {};
 
-            // Update image if it contains the old domain
-            if (contest.image && contest.image.startsWith(oldDomain)) {
-                updatedFields.image = contest.image.replace(oldDomain, newDomain);
+            if (user.image?.startsWith(oldDomain)) {
+                updatedFields.image = user.image.replace(oldDomain, newDomain);
             }
 
-            // Update the contest document
-            await RedeemableProduct.updateOne({ _id: contest._id }, { $set: updatedFields });
+            if (user.idFrontImage?.startsWith(oldDomain)) {
+                updatedFields.idFrontImage = user.idFrontImage.replace(oldDomain, newDomain);
+            }
+
+            if (user.idBackImage?.startsWith(oldDomain)) {
+                updatedFields.idBackImage = user.idBackImage.replace(oldDomain, newDomain);
+            }
+
+            await Users.updateOne({ _id: user._id }, { $set: updatedFields });
 
             return {
-                contestId: contest._id,
-                oldImage: contest.image,
-                newImage: updatedFields.image || contest.image,
+                userId: user._id,
+                updatedFields
             };
         });
 
         const results = await Promise.all(updatePromises);
 
         res.status(200).json({
-            message: "Contest image URLs updated successfully",
-            updatedContests: results,
+            message: "User image URLs updated successfully",
+            updatedUsers: results
         });
     } catch (error) {
-        console.error("Error updating contest image URLs:", error);
+        console.error("Error updating user image URLs:", error);
         res.status(500).json({ message: "Internal server error" });
     }
 };

@@ -12,11 +12,11 @@ let Coupons = mongoose.Schema(
             type: {
                 type: String,
                 enum: ["Point"],
-                // required: true,
+               
             },
             coordinates: {
                 type: [Number],
-                // required: true,
+               
             },
         },
         scanLocation: String,
@@ -35,4 +35,5 @@ Coupons.index({ location: "2dsphere" });
 Coupons.index({ updatedAt: 1 });
 Coupons.index({ carpenterId: 1 });
 Coupons.index({ contractorId: 1 });
+Coupons.index({ scannedEmail: 1 });
 export default mongoose.model("Coupons", Coupons);

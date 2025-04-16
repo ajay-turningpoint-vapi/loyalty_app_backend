@@ -7,6 +7,93 @@ import userModel from "../models/user.model";
 import { sendWhatsAppMessageForBankTransfer, sendWhatsAppMessageForUPITransfer } from "../helpers/utils";
 import redeemableOrderHistoryModel from "../models/redeemableOrderHistory.model";
 
+
+
+  
+export const pointHistoryByID=async (req, res) => {
+    try {
+        const { userId } = req.body;
+    
+        if (!userId) {
+          return res.status(400).json({ message: "User ID is required", success: false });
+        }
+    
+        const logs = await pointHistory.find({ userId }).lean();
+        const count = await pointHistory.countDocuments({ userId });
+    
+        res.json({
+          success: true,
+          message: "Point history logs retrieved successfully",
+          data: logs,
+          count: count
+        });
+    
+      } catch (error) {
+        console.error("Error fetching point history logs:", error.message);
+        res.status(500).json({ message: "Server error", success: false });
+      }
+  }
+
+
+  export const pointHistoryDelete = async (req, res) => {
+    try {
+      const { userId } = req.body;
+  
+      if (!userId) {
+        return res.status(400).json({ message: "userId is required", success: false });
+      }
+  
+      const result = await pointHistory.deleteMany({
+        userId,
+        description: { $regex: "Coupon earned", $options: "i" },
+      });
+  
+      res.status(200).json({
+        message: "Matching point history records deleted successfully",
+        deletedCount: result.deletedCount,
+        success: true,
+      });
+    } catch (error) {
+      console.error("[ERROR] Failed to delete point history:", error);
+      res.status(500).json({ message: "Internal server error", success: false });
+    }
+  };
+  
+  export const createPointlogstemp = async (
+    userId,
+    amount,
+    type,
+    description,
+    mobileDescription,
+    status = "pending",
+    pointType = "Point",
+    additionalInfo = {},
+    timestamp = null
+  ) => {
+    const logTime = timestamp ? new Date(timestamp) : new Date();
+  
+    const historyLog = {
+      transactionId: new Date().getTime().toString(),
+      userId,
+      amount,
+      type,
+      description,
+      mobileDescription,
+      status,
+      pointType,
+      additionalInfo,
+      createdAt: logTime,
+      updatedAt: logTime,
+    };
+  
+    try {
+      const savedLog = await new pointHistory(historyLog).save();
+    } catch (err) {
+      console.error("Error saving point history:", err.message);
+    }
+  };
+  
+
 export const createPointlogs = async (userId, amount, type, description, mobileDescription, status = "pending", pointType = "Point", additionalInfo = {}) => {
     let historyLog = {
         transactionId: new Date().getTime().toString(),
@@ -24,6 +111,39 @@ export const createPointlogs = async (userId, amount, type, description, mobileD
         const savedLog = await new pointHistory(historyLog).save();
     } catch (err) {
         console.error("Error saving point history:", err.message);
+    }
+};
+
+export const compensationPoints = async (req, res) => {
+    const {
+        userId,
+        amount, // Amount to be added/subtracted
+        type,
+        description,
+        mobileDescription,
+        status,
+        pointType,
+        additionalInfo,
+    } = req.body;
+
+    try {
+        // 1. Find the user
+        const user = await userModel.findById(userId);
+        if (!user) {
+            return res.status(404).json({ message: "User not found" });
+        }
+
+        // 2. Update points
+        user.points += Number(amount); // Use subtraction if type is "DEBIT"
+        await user.save();
+
+        // 3. Create the log
+        const log = await createPointlogs(userId, amount, type, description, mobileDescription, status, pointType, additionalInfo);
+
+        res.status(201).json({ message: "Points updated and log created", data: { user, log } });
+    } catch (err) {
+        console.error("Error:", err.message);
+        res.status(500).json({ message: "Something went wrong", error: err.message });
     }
 };
 

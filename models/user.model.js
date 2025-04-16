@@ -32,16 +32,7 @@ let User = mongoose.Schema(
         image: String,
         idFrontImage: String,
         idBackImage: String,
-        bankDetails: [
-            {
-                banktype: String,
-                accountName: String,
-                accountNo: String,
-                ifsc: String,
-                bank: String,
-                isActive: { type: Boolean, default: false },
-            },
-        ],
+      
         kycStatus: {
             type: String,
             default: "pending",

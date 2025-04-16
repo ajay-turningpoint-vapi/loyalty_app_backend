@@ -18,6 +18,11 @@ import {
     getExcelReportOfCoupons,
     addFieldsinCoupon,
     removeFieldsFromCoupon,
+    downloadActiveCouponsPDF,
+    getCouponsByScannedUserName,
+    getCouponsByScannedEmail,
+    getScannedCouponsWithPointMatch,
+    getScannedCouponsWithPointMatchContractor,
 } from "../controllers/coupons.controller";
 import { authorizeJwt } from "../middlewares/auth.middleware";
 
@@ -25,6 +30,8 @@ let router = express.Router();
 
 router.post("/addCoupon", addCoupons);
 router.get("/getCoupons", getAllCoupons);
+router.get("/getScannedCouponsWithPointMatch", getScannedCouponsWithPointMatch);
+router.get("/getScannedCouponsWithPointMatchContractor", getScannedCouponsWithPointMatchContractor);
 router.patch("/addFieldsInCoupons", addFieldsinCoupon);
 router.patch("/removeFieldsFromCoupon", removeFieldsFromCoupon);
 router.get("/getAllCouponsAnalytics", getAllCouponsAnalytics);
@@ -32,8 +39,10 @@ router.get("/getCouponsCount", getCouponCount);
 router.patch("/updateById/:id", updateCouponsById);
 router.delete("/deleteById/:id", deleteCouponById);
 router.get("/getActiveCoupons", getActiveCoupons);
+router.get("/active-coupons/pdf", downloadActiveCouponsPDF);
 router.get("/getScannedCoupons", getUsedCouponsforMap);
 router.get("/getScannedCouponsByEmail", getScannedCouponsByEmail);
+router.get("/getCouponsByScannedEmail", getCouponsByScannedEmail);
 router.get("/getActiveCouponsQrZip", getActiveCouponsQrZip);
 router.get("/getActiveCouponsQrExcel", getActiveCouponsExcel);
 router.post("/addMultipleCoupons", addMultipleCoupons);

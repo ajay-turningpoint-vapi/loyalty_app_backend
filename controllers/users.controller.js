@@ -269,26 +269,30 @@ export const registerUser = async (req, res, next) => {
         };
 
         // Handle contractor data for CARPENTER role
-        if (role === "CARPENTER" && req.body.contractor?.phone) {
-            // Store the contractor details in notListedContractor
-            userData.notListedContractor = {
-                name: req.body.contractor.name,
-                phone: req.body.contractor.phone,
-            };
+        if (role === "CARPENTER") {
+            const contractor = req.body.contractor;
 
-            // If contractor name and businessName are also present, assign full details
-            if (req.body.contractor.name && req.body.contractor.businessName) {
-                userData.contractor = {
-                    name: req.body.contractor.name,
-                    businessName: req.body.contractor.businessName,
-                    phone: req.body.contractor.phone,
+            if (contractor?.name && contractor?.phone) {
+                // Store the contractor details in notListedContractor
+                const notListedContractor = {
+                    name: contractor.name,
+                    phone: contractor.phone,
                 };
-            } else {
-                // Otherwise, set default contractor details
-                userData.contractor = {
-                    name: "Contractor",
-                    businessName: req.body.contractor.businessName || "Turning Point",
-                };
+
+                // Assign contractor details to userData
+                if (contractor.businessName) {
+                    userData.contractor = {
+                        name: contractor.name,
+                        businessName: contractor.businessName,
+                        phone: contractor.phone,
+                    };
+                } else {
+                    userData.contractor = {
+                        name: "Contractor",
+                        phone: "9876543210",
+                        businessName: "Turning Point",
+                    };
+                }
             }
         }
 
@@ -3496,7 +3500,7 @@ export const getTop50Carpenters = async (req, res) => {
             .find({ role: "CARPENTER" }) // Filter Carpenters
             .sort({ totalPointsEarned: -1 }) // Sort by totalPointsEarned (highest first)
             .limit(50) // Get top 50
-            .select("_id name phone businessName role totalPointsEarned image"); // Select only required fields
+            .select("_id name phone role totalPointsEarned image"); // Select only required fields
 
         if (!topCarpenters.length) {
             return res.status(404).json({ message: "No Carpenters found" });
@@ -3514,40 +3518,54 @@ export const getTop50MonthlyContractors = async (req, res) => {
         const startOfMonth = new Date(new Date().setDate(1)); // First day of the month
         const endOfMonth = new Date(); // Current date
 
-        // Aggregate total points earned for each contractor in the current month
+        // Step 1: Aggregate top 50 contractor IDs with total points this month
         const topContractors = await pointHistoryModel.aggregate([
             {
                 $match: {
-                    type: "CREDIT", // Only consider credited points
-                    createdAt: { $gte: startOfMonth, $lte: endOfMonth }, // Filter by current month
+                    type: "CREDIT",
+                    userId: { $ne: null },
+                    createdAt: { $gte: startOfMonth, $lte: endOfMonth },
                 },
             },
             {
                 $group: {
-                    _id: "$userId", // Group by userId
-                    totalPointsEarned: { $sum: "$amount" }, // Sum of credited points
+                    _id: "$userId",
+                    totalPointsEarned: { $sum: "$amount" },
                 },
             },
-            { $sort: { totalPointsEarned: -1 } }, // Sort by highest points
-            { $limit: 50 }, // Get top 50
+            { $sort: { totalPointsEarned: -1 } },
+            { $limit: 50 },
         ]);
 
         if (!topContractors.length) {
             return res.status(200).json({ message: "No Contractors found" });
         }
 
-        // Fetch contractor details from the user collection
-        const contractorIds = topContractors.map((contractor) => new mongoose.Types.ObjectId(contractor._id));
-        const contractorDetails = await userModel.find({ _id: { $in: contractorIds }, role: "CONTRACTOR", phone: { $ne: "9876543210" } }, "_id name phone businessName role points image");
+        // Step 2: Fetch contractor details
+        const contractorIds = topContractors.map((c) => new mongoose.Types.ObjectId(c._id));
+        const contractorDetails = await userModel
+            .find(
+                {
+                    _id: { $in: contractorIds },
+                    role: "CONTRACTOR",
+                    phone: { $ne: "9876543210" },
+                },
+                "_id name phone businessName role points image"
+            )
+            .lean(); // lean() for faster plain JS objects
 
-        // Merge total points with contractor details
-        const result = contractorDetails.map((contractor) => {
-            const pointsData = topContractors.find((c) => c._id.toString() === contractor._id.toString());
-            return {
-                ...contractor.toObject(),
-                totalPointsEarned: pointsData ? pointsData.totalPointsEarned : 0,
-            };
-        });
+        // Step 3: Create a fast lookup map
+        const pointsMap = new Map();
+        topContractors.forEach((c) => pointsMap.set(c._id.toString(), c.totalPointsEarned));
+
+        // Step 4: Merge details with points
+        const result = contractorDetails.map((contractor) => ({
+            ...contractor,
+            totalPointsEarned: pointsMap.get(contractor._id.toString()) || 0,
+        }));
+
+        // Step 5: Final sort (in case filtering changed order)
+        result.sort((a, b) => b.totalPointsEarned - a.totalPointsEarned);
 
         res.status(200).json({ success: true, data: result });
     } catch (err) {
@@ -3558,47 +3576,55 @@ export const getTop50MonthlyContractors = async (req, res) => {
 
 export const getTop50MonthlyCarpenters = async (req, res) => {
     try {
-        const startOfMonth = new Date(new Date().setDate(1)); // First day of the month
-        const endOfMonth = new Date(); // Current date
+        const startOfMonth = new Date(new Date().setDate(1));
+        const endOfMonth = new Date();
 
-        // Aggregate total points earned for each carpenter in the current month
+        // Step 1: Aggregate total points for carpenters in the current month
         const topCarpenters = await pointHistoryModel.aggregate([
             {
                 $match: {
-                    type: "CREDIT", // Only consider credited points
-                    createdAt: { $gte: startOfMonth, $lte: endOfMonth }, // Filter by current month
+                    type: "CREDIT",
+                    userId: { $ne: null },
+                    createdAt: { $gte: startOfMonth, $lte: endOfMonth },
                 },
             },
             {
                 $group: {
-                    _id: "$userId", // Group by userId
-                    totalPointsEarned: { $sum: "$amount" }, // Sum of credited points
+                    _id: "$userId",
+                    totalPointsEarned: { $sum: "$amount" },
                 },
             },
-            { $sort: { totalPointsEarned: -1 } }, // Sort by highest points
-            { $limit: 50 }, // Get top 50
+            { $sort: { totalPointsEarned: -1 } },
+            { $limit: 50 },
         ]);
 
         if (!topCarpenters.length) {
             return res.status(200).json({ message: "No Carpenters found" });
         }
 
-        // Fetch carpenter details from the user collection
-        const carpenterIds = topCarpenters.map((carpenter) => new mongoose.Types.ObjectId(carpenter._id));
-        const carpenterDetails = await userModel.find({ _id: { $in: carpenterIds }, role: "CARPENTER" }, "_id name phone businessName role points image");
+        // Step 2: Fetch carpenter user details
+        const carpenterIds = topCarpenters.map((c) => new mongoose.Types.ObjectId(c._id));
+        const carpenterDetails = await userModel.find({ _id: { $in: carpenterIds }, role: "CARPENTER" }, "_id name phone role points image");
 
-        // Merge total points with carpenter details
-        const result = carpenterDetails.map((carpenter) => {
-            const pointsData = topCarpenters.find((c) => c._id.toString() === carpenter._id.toString());
-            return {
-                ...carpenter.toObject(),
-                totalPointsEarned: pointsData ? pointsData.totalPointsEarned : 0,
-            };
+        // Step 3: Map totalPointsEarned to user details using a Map for efficiency
+        const pointsMap = {};
+        topCarpenters.forEach((c) => {
+            pointsMap[c._id.toString()] = c.totalPointsEarned;
         });
 
-        res.status(200).json({ success: true, data: result });
+        // Step 4: Merge and sort by totalPointsEarned
+        const result = carpenterDetails
+            .map((carpenter) => {
+                return {
+                    ...carpenter.toObject(),
+                    totalPointsEarned: pointsMap[carpenter._id.toString()] || 0,
+                };
+            })
+            .sort((a, b) => b.totalPointsEarned - a.totalPointsEarned); // Ensures correct order
+
+        return res.status(200).json({ success: true, data: result });
     } catch (err) {
-        console.error(err);
+        console.error("Error fetching top carpenters:", err);
         res.status(500).json({ message: "Server error" });
     }
 };
@@ -3664,6 +3690,24 @@ export const updateTotalPointsForAllUsers = async (req, res) => {
         await userModel.bulkWrite(bulkUpdates);
 
         res.status(200).json({ success: true, message: "All users updated successfully" });
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ message: "Server error" });
+    }
+};
+
+export const resetAllUsersPoints = async (req, res) => {
+    try {
+        const result = await userModel.updateMany(
+            {}, // No filter to update all users
+            { $set: { totalPointsEarned: 0 } } // Set totalPointsEarned to 0
+        );
+
+        if (result.modifiedCount === 0) {
+            return res.status(404).json({ message: "No users updated" });
+        }
+
+        res.status(200).json({ success: true, message: "Total points for all users have been reset to 0" });
     } catch (err) {
         console.error(err);
         res.status(500).json({ message: "Server error" });

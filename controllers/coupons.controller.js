@@ -20,6 +20,9 @@ import { sendNotificationMessage } from "../middlewares/fcm.middleware";
 import ExcelJS from "exceljs";
 import Transaction from "../models/couponTransaction.modal";
 import fs from "fs";
+import PDFDocument from "pdfkit";
+import path from "path";
+import pointHistoryModel from "../models/pointHistory.model";
 
 const jsonFilePath = "D:/Turningpoint/loyaty_app_backend/controllers/backup.json";
 
@@ -341,31 +344,94 @@ export const getActiveCoupons = async (req, res, next) => {
     }
 };
 
-export const getActiveCouponsdummy = async (req, res, next) => {
+export const downloadActiveCouponsPDF = async (req, res) => {
     try {
-        let query = {};
-        let todayStart = new Date();
-        todayStart.setHours(0, 0, 0);
-
-        // Find coupons based on maximumNoOfUsersAllowed and productName (if provided)
-        query.maximumNoOfUsersAllowed = 1;
+        let query = { maximumNoOfUsersAllowed: 1 };
 
         if (req.query.productName) {
-            query.productName = req.query.productName; // Add productName to query if provided
+            query.productName = req.query.productName;
         }
 
-        let CouponArr = await Coupon.find(query)
-            .select({ name: 1, _id: 0 }) // Select only "name" and exclude "_id"
-            .lean()
-            .exec();
+        if (req.query.name) {
+            query.name = { $regex: new RegExp(req.query.name, "i") };
+        }
 
-        // Flatten the response to just an array of names
-        let transformedData = CouponArr.map((coupon) => coupon.name);
+        const coupons = await Coupon.find(query).lean().exec();
+        if (!coupons.length) {
+            return res.status(404).json({ message: "No active coupons found" });
+        }
 
-        res.status(200).json({ message: "active coupons", data: transformedData, success: true });
+        const couponsWithStringId = coupons.map((coupon) => ({
+            ...coupon,
+            _id: coupon._id.toString(),
+        }));
+
+        const doc = new PDFDocument({
+            size: [283.5, 141.75], // 10 cm x 5 cm
+            margin: 0,
+        });
+        let buffers = [];
+
+        doc.on("data", buffers.push.bind(buffers));
+        doc.on("end", () => {
+            const pdfData = Buffer.concat(buffers);
+            res.setHeader("Content-Type", "application/pdf");
+            res.setHeader("Content-Disposition", 'inline; filename="coupons.pdf"');
+            res.send(pdfData);
+        });
+
+        // Dimensions
+        const qrSize = 56.7; // 2 cm
+        const textHeight = 30; // Estimated height for two lines of text
+        const spacing = 0; // space between QR and text
+        const totalBlockHeight = qrSize + spacing + textHeight;
+        const pageHeight = doc.page.height;
+        const pageWidth = doc.page.width;
+
+        let startY = 30; // Start at the top of the page
+        const marginBottom = 10; // Space at the bottom of the page
+
+        // Loop through all coupons and generate QR codes and text
+        for (const coupon of couponsWithStringId) {
+            const qrData = await QRCode.toDataURL(coupon._id);
+            const base64Data = qrData.replace(/^data:image\/png;base64,/, "");
+            const qrBuffer = Buffer.from(base64Data, "base64");
+
+            // Right-aligned X-position (subtract from the page width)
+            const startX = pageWidth - qrSize - 20; // 10 is the margin from right
+
+            // Draw QR code
+            doc.image(qrBuffer, startX, startY, {
+                width: qrSize,
+                height: qrSize,
+            });
+
+            // Set font size for text
+            doc.fontSize(6);
+
+            // Draw text below QR (also aligned to the right)
+            doc.text(`${coupon.name}`, startX, startY + qrSize + spacing, {
+                align: "left",
+            });
+
+            doc.text(`${coupon.productName}`, startX, startY + qrSize + spacing + 10, {
+                align: "left",
+            });
+
+            // Adjust startY for the next coupon
+            startY += totalBlockHeight + marginBottom;
+
+            // Check if we're at the bottom of the page
+            if (startY + totalBlockHeight > pageHeight) {
+                doc.addPage(); // Add a new page if we run out of space
+                startY = 10; // Reset Y position for new page
+            }
+        }
+
+        doc.end();
     } catch (error) {
-        console.error(error);
-        next(error);
+        console.error("Error generating PDF:", error);
+        res.status(500).send("Failed to generate PDF");
     }
 };
 
@@ -464,6 +530,45 @@ export const getScannedCouponsByEmail = async (req, res, next) => {
             message: "List of scanned coupons",
             data: {
                 scannedCoupons: scannedCoupons, // Filtered results
+                productTotals: productCounts, // Always contains all product totals
+            },
+            success: true,
+        });
+    } catch (error) {
+        console.error(error);
+        next(error);
+    }
+};
+
+export const getCouponsByScannedEmail = async (req, res, next) => {
+    try {
+        const { scannedEmail } = req.query;
+
+        if (!scannedEmail) {
+            return res.status(400).json({ message: "Scanned Email is required", success: false });
+        }
+
+        // Case-insensitive query for filtering coupons by scannedEmail
+        let query = { scannedEmail: { $regex: scannedEmail, $options: "i" } };
+
+        // Fetch coupons with the applied filter
+        let coupons = await Coupon.find(query).lean().exec();
+
+        // Get productTotals without filtering by productName (ensuring all products are counted)
+        const productCounts = await Coupon.aggregate([
+            { $match: { scannedEmail: { $regex: scannedEmail, $options: "i" } } }, // Only filter by scannedEmail
+            {
+                $group: {
+                    _id: "$productName",
+                    total: { $sum: 1 },
+                },
+            },
+        ]);
+
+        res.status(200).json({
+            message: "List of coupons by scanned email",
+            data: {
+                coupons: coupons, // Filtered results
                 productTotals: productCounts, // Always contains all product totals
             },
             success: true,
@@ -730,90 +835,6 @@ export const addMultipleCoupons = async (req, res, next) => {
 //     }
 // };
 
-export const applyCouponworking = async (req, res, next) => {
-    try {
-        const { id, latitude, longitude } = req.body;
-        const { userId, name, email } = req.user;
-
-        // Find coupon by ID or name
-        const findArr = mongoose.isValidObjectId(id) ? [{ _id: id }, { name: id }] : [{ name: id }];
-        const CouponObj = await Coupon.findOne({ $or: findArr }).exec();
-
-        if (!CouponObj) {
-            return res.status(404).json({ message: "Coupon not found" });
-        }
-
-        // Atomically update coupon and check if it was already applied
-        const updatedCoupon = await Coupon.findOneAndUpdate(
-            { _id: CouponObj._id, maximumNoOfUsersAllowed: 1 },
-            {
-                $set: {
-                    maximumNoOfUsersAllowed: 0,
-                    scannedUserName: name,
-                    scannedEmail: email,
-                    location: { type: "Point", coordinates: [longitude, latitude] },
-                },
-            },
-            { new: true }
-        );
-
-        if (!updatedCoupon) {
-            return res.status(400).json({ message: "Coupon already applied!" });
-        }
-
-        // Fetch the user's details
-        const UserObj = await Users.findById(userId).exec();
-
-        if (!UserObj) {
-            return res.status(404).json({ message: "User not found" });
-        }
-
-        const points = updatedCoupon.value;
-
-        if (points !== 0) {
-            // Update user's points and log the transaction
-            const pointDescription = `Coupon earned ${points} points by scanning the QR code.`;
-            const mobileDescription = "Coupon";
-            await createPointlogs(userId, points, pointTransactionType.CREDIT, pointDescription, mobileDescription, "success");
-            await activityLogsModel.create({ userId, type: "Scanned Coupon" });
-
-            const updatedCarpenterPoints = { points: UserObj.points + parseInt(points) };
-            await Users.findByIdAndUpdate(userId, updatedCarpenterPoints).exec();
-
-            // Handle contractor points update and logs
-            if (UserObj.contractor && UserObj.contractor.name) {
-                const contractorName = UserObj.contractor.name;
-                const contractorPoints = Math.floor(points * 0.5);
-                const contractorPointDescription = `Earned ${contractorPoints} points (50% of coupon points) from ${name}`;
-
-                const ContractorObj = await Users.findOne({ name: contractorName, role: "CONTRACTOR" }).exec();
-
-                if (ContractorObj) {
-                    const updatedContractorPoints = { points: ContractorObj.points + contractorPoints };
-                    await Users.findByIdAndUpdate(ContractorObj._id, updatedContractorPoints).exec();
-                    await createPointlogs(ContractorObj._id, contractorPoints, pointTransactionType.CREDIT, contractorPointDescription, `Royalty`, "success");
-                    try {
-                        const title = "🎉 कमीशन प्राप्त हुआ!";
-                        const body = `🏆 ${name} से आपको ${contractorPoints} पॉइंट्स मिले हैं।`;
-                        await sendNotificationMessage(ContractorObj._id, title, body, "commission");
-                    } catch (notificationError) {
-                        console.error("Error sending notification:", notificationError);
-                    }
-                } else {
-                    console.warn(`Contractor with name ${contractorName} not found.`);
-                }
-            }
-
-            res.status(200).json({ message: "Coupon applied", success: true, points });
-        } else {
-            res.status(200).json({ message: "Better luck next time", success: true, points });
-        }
-    } catch (err) {
-        console.error("Error in applyCoupon:", err);
-        next(err);
-    }
-};
-
 export const applyCoupon = async (req, res, next) => {
     try {
         const { id, latitude, longitude } = req.body;
@@ -927,7 +948,7 @@ const handleContractorPoints = async (phone, carpenterId, points, couponName, Co
 
     if (ContractorObj) {
         await Users.findByIdAndUpdate(ContractorObj._id, { $inc: { points: contractorPoints, totalPointsEarned: contractorPoints } });
-        await createPointlogs(ContractorObj._id, contractorPoints, pointTransactionType.CREDIT, contractorPointDescription, "Royalty", "success");
+
         await Coupon.findByIdAndUpdate(CouponObj._id, {
             $set: {
                 contractorId: ContractorObj._id,
@@ -935,11 +956,12 @@ const handleContractorPoints = async (phone, carpenterId, points, couponName, Co
             },
         });
 
+        await createPointlogs(ContractorObj._id, contractorPoints, pointTransactionType.CREDIT, contractorPointDescription, "Royalty", "success");
+
         await sendContractorNotification(ContractorObj._id, contractorPoints, couponName);
     }
 };
 
-// Send notification to contractor
 const sendContractorNotification = async (contractorId, contractorPoints, couponName) => {
     try {
         const title = "🎉 कमीशन प्राप्त हुआ!";
@@ -1024,5 +1046,139 @@ export const getExcelReportOfCoupons = async (req, res) => {
     } catch (error) {
         console.error(error);
         res.status(500).json({ message: "An error occurred while generating the coupons report." });
+    }
+};
+
+export const getScannedCouponsWithPointMatch = async (req, res, next) => {
+    try {
+        const { scannedEmail } = req.query;
+
+        console.log("[INFO] Request received to fetch scanned coupons with email:", scannedEmail);
+
+        if (!scannedEmail) {
+            console.warn("[WARN] No scanned email provided in the query.");
+            return res.status(400).json({ message: "Scanned email is required", success: false });
+        }
+
+        // Step 1: Find user by scannedEmail
+        const user = await Users.findOne({ email: scannedEmail });
+        if (!user) {
+            console.warn("[WARN] No user found with scannedEmail:", scannedEmail);
+            return res.status(404).json({ message: "User not found with this email", success: false });
+        }
+        console.log("[INFO] User found:", user._id, "-", user.userName || user.name);
+
+        // Step 2: Find all matching coupons
+        const coupons = await Coupon.find({ scannedEmail: scannedEmail }).lean();
+        console.log(`[INFO] Found ${coupons.length} matching coupons for email ${scannedEmail}`);
+
+        if (coupons.length === 0) {
+            console.log("[INFO] No coupons found for scannedEmail.");
+        }
+
+        // Step 3: Calculate total value and count
+        const totalValue = coupons.reduce((acc, curr) => acc + (curr.value || 0), 0);
+        const totalCount = coupons.length;
+        console.log(`[INFO] Total coupon value: ${totalValue}, Total count: ${totalCount}`);
+
+        // Step 4: Create point logs for each coupon
+        for (const [index, coupon] of coupons.entries()) {
+            const points = coupon.value || 0;
+
+            const pointDescription = `Coupon earned ${points} points by scanning ${coupon.name} ${coupon.productName} (${coupon.scannedUserName}).`;
+
+            console.log(`[LOG] Creating point log ${index + 1}/${coupons.length} for couponId: ${coupon._id}, points: ${points}`);
+
+            const pointResponse = await createPointlogs(user._id.toString(), points, pointTransactionType.CREDIT, pointDescription, "Coupon", "success", "Point", { couponId: coupon._id }, coupon.updatedAt);
+            console.log(pointResponse, "Point Response");
+        }
+
+        console.log("[SUCCESS] All point logs created successfully for scanned coupons.");
+
+        res.status(200).json({
+            message: "Coupons with matching point histories and point logs created",
+            data: coupons,
+            totalValue,
+            totalCount,
+            success: true,
+        });
+    } catch (error) {
+        console.error("[ERROR] An error occurred while processing scanned coupons:", error);
+        next(error);
+    }
+};
+
+export const getScannedCouponsWithPointMatchContractor = async (req, res, next) => {
+    try {
+        const { scannedEmail } = req.query;
+
+        if (!scannedEmail) {
+            return res.status(400).json({ message: "Scanned email is required", success: false });
+        }
+
+        // Step 1: Find user by scannedEmail
+        const user = await Users.findOne({ email: scannedEmail }).lean();
+        if (!user) {
+            return res.status(404).json({ message: "User not found with this email", success: false });
+        }
+
+        console.log("[INFO] User found:", user._id, user.name);
+
+        // Step 2: Get contractor.businessName from user
+        const contractorBusinessName = user?.contractor?.businessName;
+        if (!contractorBusinessName) {
+            return res.status(400).json({ message: "Contractor business name not found in user data", success: false });
+        }
+
+        // Step 3: Find contractor user by businessName
+        const ContractorObj = await Users.findOne({ businessName: contractorBusinessName }).lean();
+        if (!ContractorObj) {
+            return res.status(404).json({ message: "Contractor user not found", success: false });
+        }
+
+        console.log("[INFO] Contractor found:", ContractorObj._id, ContractorObj.name || ContractorObj.userName);
+
+        // Step 4: Find all scanned coupons
+        const coupons = await Coupon.find({ scannedEmail }).lean();
+        if (coupons.length === 0) {
+            return res.status(200).json({ message: "No coupons found", data: [], success: true });
+        }
+
+        console.log("coupons", coupons.length, "COUPONS_FOUND");
+
+        // Step 5: Create point logs for contractor
+        for (const CouponObj of coupons) {
+            const couponName = CouponObj.name || "Unknown Coupon";
+            const productName = CouponObj.productName || "";
+            const contractorPoints = Math.floor((CouponObj.value || 0) * 0.5); // Applying Math.floor to round down
+
+            if (contractorPoints > 0) {
+                const contractorPointDescription = `Earned ${contractorPoints} points (50% of coupon points) to Contractor: ${ContractorObj?.name || "Unknown Contractor"} from ${couponName} ${productName}.`;
+
+                const log = await createPointlogs(
+                    ContractorObj._id.toString(),
+                    contractorPoints,
+                    pointTransactionType.CREDIT,
+                    contractorPointDescription,
+                    "Royalty", // Source
+                    "success", // Status
+                    "Point", // Type
+                    { couponId: CouponObj._id },
+                    CouponObj.updatedAt
+                );
+
+                console.log("[LOG CREATED] Contractor Point Log:", log);
+            }
+        }
+
+        res.status(200).json({
+            message: "Contractor point logs created successfully",
+            data: coupons,
+            totalCoupons: coupons.length,
+            success: true,
+        });
+    } catch (error) {
+        console.error("[ERROR] Failed to process contractor point logs:", error);
+        next(error);
     }
 };

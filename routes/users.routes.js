@@ -68,6 +68,7 @@ import {
     getTop50MonthlyContractors,
     getTop50MonthlyCarpenters,
     userOnline,
+    resetAllUsersPoints,
 } from "../controllers/users.controller";
 import { authorizeJwt } from "../middlewares/auth.middleware";
 import { sendSingleNotificationMiddleware } from "../middlewares/fcm.middleware";
@@ -104,6 +105,7 @@ router.get("/getTopCarpenters", getTop50Carpenters);
 router.get("/getTopMonthlyCarpenters", getTop50MonthlyCarpenters);
 router.get("/getUserCreditHistory", getUserCreditHistory);
 router.put("/update-all-users-totalpoints", updateTotalPointsForAllUsers);
+router.put("/resetAllUsersPoints", resetAllUsersPoints);
 router.get("/getExcelReportOfUser", getExcelReportOfUsers);
 router.post("/getContractorUsingPhone", getContractorUsingPhone);
 router.get("/getAllCarpentersByContractorName", authorizeJwt, getAllCaprenterByContractorName);

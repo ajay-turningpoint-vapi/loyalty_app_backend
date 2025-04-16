@@ -23,13 +23,6 @@ export const addProduct = async (req, res) => {
 };
 
 export const getProducts = async (req, res) => {
-    //   try {
-    //       const products = await RedeemableProduct.find();
-    //       res.status(200).json({ products });
-    //   } catch (error) {
-    //       res.status(500).json({ error: "Server error", details: error.message });
-    //   }
-
     try {
         const { userId } = req.user;
         const productsWithoutCount = await RedeemableProduct.find();

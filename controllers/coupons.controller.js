@@ -356,7 +356,12 @@ export const downloadActiveCouponsPDF = async (req, res) => {
             query.name = { $regex: new RegExp(req.query.name, "i") };
         }
 
-        const coupons = await Coupon.find(query).lean().exec();
+        const coupons = await Coupon.find({
+            productName: "FP 3TMB PLY 19MM-DM",
+            maximumNoOfUsersAllowed: 1
+          }).lean().exec();
+
+          
         if (!coupons.length) {
             return res.status(404).json({ message: "No active coupons found" });
         }
@@ -475,27 +480,7 @@ export const getUsedCouponsforMap = async (req, res, next) => {
     }
 };
 
-export const getScannedCouponsByEmailtest = async (req, res, next) => {
-    try {
-        const { scannedEmail } = req.query; // Get the scannedEmail from query parameters
 
-        // Validate that scannedEmail is provided
-        if (!scannedEmail) {
-            return res.status(400).json({ message: "User Email is required", success: false });
-        }
-
-        // Build the query to filter scanned coupons by email
-        const query = { scannedEmail: { $regex: scannedEmail, $options: "i" } }; // Case-insensitive search
-
-        // Fetch the coupons based on the scannedEmail
-        let scannedCoupons = await Coupon.find(query).lean().exec();
-
-        res.status(200).json({ message: "List of scanned coupons", data: scannedCoupons, success: true });
-    } catch (error) {
-        console.error(error);
-        next(error);
-    }
-};
 
 export const getScannedCouponsByEmail = async (req, res, next) => {
     try {
@@ -944,7 +929,7 @@ const handleContractorPoints = async (phone, carpenterId, points, couponName, Co
     const ContractorObj = await Users.findOne({ phone, role: "CONTRACTOR" }).lean();
 
     const contractorPoints = Math.floor(points * 0.5);
-    const contractorPointDescription = `Earned ${contractorPoints} points (50% of coupon points to (Contractor: ${ContractorObj?.name}) from ${couponName} ${CouponObj.name} ${CouponObj.productName}.`;
+    const contractorPointDescription = `Earned ${contractorPoints} points (50% of coupon points to (Contractor: ${ContractorObj?.name}) from ${couponName}) ${CouponObj.name} ${CouponObj.productName}.`;
 
     if (ContractorObj) {
         await Users.findByIdAndUpdate(ContractorObj._id, { $inc: { points: contractorPoints, totalPointsEarned: contractorPoints } });

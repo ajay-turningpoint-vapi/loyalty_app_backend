@@ -86,13 +86,13 @@ const initializeWhatsAppClient = () => {
 // Global error handling
 process.on("uncaughtException", async (error) => {
     console.error("Uncaught Exception:", error);
-    await sendWhatsAppMessageForSessionError();
+    // await sendWhatsAppMessageForSessionError();
     process.exit(1);
 });
 
 process.on("unhandledRejection", async (reason) => {
     console.error("Unhandled Rejection:", reason);
-    await sendWhatsAppMessageForSessionError();
+    // await sendWhatsAppMessageForSessionError();
     process.exit(1);
 });
 

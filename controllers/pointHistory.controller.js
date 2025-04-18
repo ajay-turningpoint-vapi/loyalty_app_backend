@@ -4,95 +4,79 @@ import Users from "../models/user.model";
 import Coupon from "../models/Coupons.model";
 import mongoose from "mongoose";
 import userModel from "../models/user.model";
-import { sendWhatsAppMessageForBankTransfer, sendWhatsAppMessageForUPITransfer } from "../helpers/utils";
+import { sendWhatsAppMessageForBankTransfer, sendWhatsAppMessageForUPITransfer, sendWhatsAppMessageProductRedeem } from "../helpers/utils";
 import redeemableOrderHistoryModel from "../models/redeemableOrderHistory.model";
 
-
-
-  
-export const pointHistoryByID=async (req, res) => {
+export const pointHistoryByID = async (req, res) => {
     try {
         const { userId } = req.body;
-    
+
         if (!userId) {
-          return res.status(400).json({ message: "User ID is required", success: false });
+            return res.status(400).json({ message: "User ID is required", success: false });
         }
-    
+
         const logs = await pointHistory.find({ userId }).lean();
         const count = await pointHistory.countDocuments({ userId });
-    
+
         res.json({
-          success: true,
-          message: "Point history logs retrieved successfully",
-          data: logs,
-          count: count
+            success: true,
+            message: "Point history logs retrieved successfully",
+            data: logs,
+            count: count,
         });
-    
-      } catch (error) {
+    } catch (error) {
         console.error("Error fetching point history logs:", error.message);
         res.status(500).json({ message: "Server error", success: false });
-      }
-  }
+    }
+};
 
-
-  export const pointHistoryDelete = async (req, res) => {
+export const pointHistoryDelete = async (req, res) => {
     try {
-      const { userId } = req.body;
-  
-      if (!userId) {
-        return res.status(400).json({ message: "userId is required", success: false });
-      }
-  
-      const result = await pointHistory.deleteMany({
-        userId,
-        description: { $regex: "Coupon earned", $options: "i" },
-      });
-  
-      res.status(200).json({
-        message: "Matching point history records deleted successfully",
-        deletedCount: result.deletedCount,
-        success: true,
-      });
+        const { userId } = req.body;
+
+        if (!userId) {
+            return res.status(400).json({ message: "userId is required", success: false });
+        }
+
+        const result = await pointHistory.deleteMany({
+            userId,
+            description: { $regex: "Coupon earned", $options: "i" },
+        });
+
+        res.status(200).json({
+            message: "Matching point history records deleted successfully",
+            deletedCount: result.deletedCount,
+            success: true,
+        });
     } catch (error) {
-      console.error("[ERROR] Failed to delete point history:", error);
-      res.status(500).json({ message: "Internal server error", success: false });
+        console.error("[ERROR] Failed to delete point history:", error);
+        res.status(500).json({ message: "Internal server error", success: false });
     }
-  };
-  
-  export const createPointlogstemp = async (
-    userId,
-    amount,
-    type,
-    description,
-    mobileDescription,
-    status = "pending",
-    pointType = "Point",
-    additionalInfo = {},
-    timestamp = null
-  ) => {
+};
+
+export const createPointlogstemp = async (userId, amount, type, description, mobileDescription, status = "pending", pointType = "Point", additionalInfo = {}, timestamp = null) => {
     const logTime = timestamp ? new Date(timestamp) : new Date();
-  
+
     const historyLog = {
-      transactionId: new Date().getTime().toString(),
-      userId,
-      amount,
-      type,
-      description,
-      mobileDescription,
-      status,
-      pointType,
-      additionalInfo,
-      createdAt: logTime,
-      updatedAt: logTime,
+        transactionId: new Date().getTime().toString(),
+        userId,
+        amount,
+        type,
+        description,
+        mobileDescription,
+        status,
+        pointType,
+        additionalInfo,
+        createdAt: logTime,
+        updatedAt: logTime,
     };
-  
+
     try {
-      const savedLog = await new pointHistory(historyLog).save();
+        const savedLog = await new pointHistory(historyLog).save();
     } catch (err) {
-      console.error("Error saving point history:", err.message);
+        console.error("Error saving point history:", err.message);
     }
-  };
-  
+};
 
 export const createPointlogs = async (userId, amount, type, description, mobileDescription, status = "pending", pointType = "Point", additionalInfo = {}) => {
     let historyLog = {
@@ -639,36 +623,63 @@ export const updatePointHistoryStatus = async (req, res, next) => {
             return res.status(404).json({ message: "Transaction Not Found", success: false });
         }
 
-        // Extract orderId from additionalInfo
         const orderId = pointHistoryObj?.additionalInfo?.transferDetails?.orderId;
         if (!orderId) {
             return res.status(400).json({ message: "Order ID Not Found", success: false });
         }
 
-        if (status === "reject") {
-            let userObj = await userModel.findById(pointHistoryObj.userId).exec();
-            if (!userObj) {
-                return res.status(404).json({ message: "User Not Found", success: false });
-            }
-
-            // Refund diamonds to the user
-            await userModel.findByIdAndUpdate(userObj._id, { $inc: { diamonds: pointHistoryObj.amount } }, { new: true }).exec();
-
-            let mobileDescription = "Rejection";
-            await createPointlogs(pointHistoryObj.userId, pointHistoryObj.amount, pointTransactionType.CREDIT, `Diamonds returned due to rejection of transaction by admin because ${reason}`, mobileDescription, "success", reason);
-
-            // Update the order status to "reject"
-            await redeemableOrderHistoryModel.findByIdAndUpdate(orderId, { status: "reject" }).exec();
-        } else if (status === "delivered") {
-            // Update the order status to "delivered"
-            await redeemableOrderHistoryModel.findByIdAndUpdate(orderId, { status: "delivered", deliveredAt: new Date() }).exec();
+        const user = await userModel.findById(pointHistoryObj.userId).exec();
+        if (!user) {
+            return res.status(404).json({ message: "User Not Found", success: false });
         }
 
-        // Update transaction status and reason
-        await pointHistory.findByIdAndUpdate(id, { status, reason }).exec();
+        const orderData = await redeemableOrderHistoryModel.findById(orderId).populate("product").exec();
+        const productName = orderData?.product?.name || "Product";
+
+        if (status === "reject") {
+            // Refund diamonds
+            await userModel.findByIdAndUpdate(user._id, {
+                $inc: { diamonds: pointHistoryObj.amount }
+            }, { new: true });
+
+            let mobileDescription = "Rejection";
+            await createPointlogs(
+                pointHistoryObj.userId,
+                pointHistoryObj.amount,
+                pointTransactionType.CREDIT,
+                `Diamonds returned due to rejection of transaction by admin because ${reason}`,
+                mobileDescription,
+                "success",
+                reason
+            );
+
+            // Update order status to reject
+            await redeemableOrderHistoryModel.findByIdAndUpdate(orderId, { status: "reject" });
+        } 
+        
+        if (status === "delivered") {
+            await redeemableOrderHistoryModel.findByIdAndUpdate(orderId, {
+                status: "delivered",
+                deliveredAt: new Date(),
+            });
+        }
+
+        // Update point history status
+        await pointHistory.findByIdAndUpdate(id, { status, reason });
+
+        // Common WhatsApp message sending for both statuses
+        const to = `91${user.phone}`;
+        const body_1 = user.name;
+        const body_2 = productName;
+        const body_3 = pointHistoryObj.amount.toString(); // Quantity
+        const body_4 = pointHistoryObj.amount.toString(); // Diamonds
+        const body_5 = status === "reject" ? "Rejected" : "Delivered";
+
+        await sendWhatsAppMessageProductRedeem(to, body_1, body_2, body_3, body_4, body_5, reason);
 
         res.status(200).json({ message: "Transaction & Order Status Updated Successfully", success: true });
     } catch (err) {
         next(err);
     }
 };
+

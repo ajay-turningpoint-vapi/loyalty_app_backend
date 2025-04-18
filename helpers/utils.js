@@ -12,8 +12,6 @@ AWS.config.update({
 const sns = new AWS.SNS();
 
 export const UserActiveSMS = async (req, res, next) => {
-
-
     try {
         const { name, phone } = req.body;
         const profileUrl = "http://api.turningpointvapi.com/Users-list";
@@ -36,14 +34,12 @@ Turning Point Team`,
 
         sns.publish(params, (err, data) => {
             if (err) {
-              
                 // res.status(500).send("Error sending SMS");
             } else {
                 // res.status(200).send("User registered and SMS sent");
             }
         });
     } catch (err) {
-       
         next(err);
     }
 };
@@ -71,14 +67,12 @@ Turning Point Team`,
 
         sns.publish(params, (err, data) => {
             if (err) {
-              
                 res.status(500).send("Error sending SMS");
             } else {
                 res.status(200).send("User registered and SMS sent");
             }
         });
     } catch (err) {
-     
         next(err);
     }
 };
@@ -94,7 +88,6 @@ export const generateUid = async () => {
             check = false;
             return tempUid;
         }
-      
     }
 };
 
@@ -165,7 +158,6 @@ export async function sendWhatsAppMessage(templateName, to, body_1, body_2, body
 }
 
 export async function sendWhatsAppMessageContestWinners(to, contestName, winnersList) {
-
     const payload = {
         integrated_number: "918200025803",
         content_type: "template",
@@ -206,7 +198,6 @@ export async function sendWhatsAppMessageContestWinners(to, contestName, winners
             },
         });
 
-      
         return response.data;
     } catch (error) {
         console.error("Error sending WhatsApp message:", error.response ? error.response.data : error.message);
@@ -404,6 +395,71 @@ export async function sendWhatsAppMessageForSessionError() {
                 "Content-Type": "application/json",
             },
         });
+        return response.data;
+    } catch (error) {
+        console.error("Error sending WhatsApp message:", error);
+    }
+}
+
+export async function sendWhatsAppMessageProductRedeem(to, body_1, body_2, body_3, body_4, body_5, body_6) {
+    console.log("to", to, body_1, body_2, body_3, body_4, body_5, body_6);
+
+    const payload = {
+        integrated_number: "918200025803",
+        content_type: "template",
+        payload: {
+            messaging_product: "whatsapp",
+            type: "template",
+            template: {
+                name: "diamondproduct",
+                language: {
+                    code: "en",
+                    policy: "deterministic",
+                },
+                namespace: null,
+                to_and_components: [
+                    {
+                        to: [to],
+                        components: {
+                            body_1: {
+                                type: "text",
+                                value: body_1,
+                            },
+                            body_2: {
+                                type: "text",
+                                value: body_2,
+                            },
+                            body_3: {
+                                type: "text",
+                                value: body_3,
+                            },
+                            body_4: {
+                                type: "text",
+                                value: body_4,
+                            },
+                            body_5: {
+                                type: "text",
+                                value: body_5,
+                            },
+                            body_6: {
+                                type: "text",
+                                value: body_6,
+                            },
+                        },
+                    },
+                ],
+            },
+        },
+    };
+
+    try {
+        const response = await axios.post("https://api.msg91.com/api/v5/whatsapp/whatsapp-outbound-message/bulk/", payload, {
+            headers: {
+                authkey: `418451AzKt9qoMmlL664c674fP1`,
+                "Content-Type": "application/json",
+            },
+        });
+
         return response.data;
     } catch (error) {
         console.error("Error sending WhatsApp message:", error);

@@ -4,7 +4,7 @@ import express from "express";
 import mongoose from "mongoose";
 import logger from "morgan";
 import path from "path";
-
+import compression from "compression";
 import { CONFIG } from "./helpers/Config";
 import { errorHandler } from "./helpers/ErrorHandler";
 import attribute from "./routes/attribute.routes";
@@ -32,6 +32,11 @@ import activityLogsRouter from "./routes/activityLogs.routes";
 import promotionRoutes from "./routes/promotion.routes";
 import ticketRoutes from "./routes/ticket.routes";
 import noteRoutes from "./routes/notes.routes";
+import gameRoutes from "./routes/game.routes";
+import statsRoutes from "./routes/stats.routes";
+import scoreRoutes from "./routes/score.routes";
+import leaderboardRoutes from "./routes/leaderboard.routes";
+import helmet from "helmet";
 import { format } from "date-fns";
 const schedule = require("node-schedule");
 const { exec } = require("child_process");
@@ -52,7 +57,9 @@ const restrictionRoutes = require("./routes/restrictionRoutes");
 
 const fs = require("fs");
 const app = express();
+app.use(helmet());
 app.use(cors());
+app.use(compression());
 
 // const promMiddleware = promBundle({
 //     includeMethod: true,
@@ -133,6 +140,10 @@ app.use("/promotions", promotionRoutes);
 app.use("/ticket", ticketRoutes);
 app.use("/notes", noteRoutes);
 app.use("/restrictions", restrictionRoutes);
+app.use("/games", gameRoutes);
+app.use("/stats", statsRoutes);
+app.use("/scores", scoreRoutes);
+app.use("/leaderboard", leaderboardRoutes);
 app.use("/", fileRouter);
 
 app.get("/backup", async (req, res) => {

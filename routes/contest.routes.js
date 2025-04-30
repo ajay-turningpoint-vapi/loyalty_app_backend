@@ -25,6 +25,7 @@ import {
     checkContestPrevious,
     addUserContestNote,
     updateUserToObjectId,
+    createPointlogsForRedeemContest,
 } from "../controllers/contest.controller";
 let router = express.Router();
 import { authorizeJwt } from "../middlewares/auth.middleware";
@@ -54,5 +55,6 @@ router.get("/check-contest-previous", checkContestPrevious);
 
 router.put("/updateUserToObjectId", updateUserToObjectId);
 router.get("/check-contest", checkContest);
+router.get("/create-contest-points", createPointlogsForRedeemContest);
 
 export default router;

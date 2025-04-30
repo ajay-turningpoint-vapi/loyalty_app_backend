@@ -3,7 +3,7 @@
 import { storeFileAndReturnNameBase64 } from "../helpers/fileSystem";
 import Coupon from "../models/Coupons.model";
 import Users from "../models/user.model";
-import { createPointlogs } from "./pointHistory.controller";
+import { createPointlogs, createPointlogsSession } from "./pointHistory.controller";
 import { pointTransactionType } from "./../helpers/Constants";
 import { generateCouponCode, QrGenerator, ZipGenerator } from "../helpers/Generators";
 import productModel from "../models/product.model";
@@ -353,15 +353,10 @@ export const downloadActiveCouponsPDF = async (req, res) => {
         }
 
         if (req.query.name) {
-            query.name = { $regex: new RegExp(req.query.name, "i") };
+            query.name = req.query.name;
         }
 
-        const coupons = await Coupon.find({
-            productName: "FP 3TMB PLY 19MM-DM",
-            maximumNoOfUsersAllowed: 1
-          }).lean().exec();
-
-          
+        const coupons = await Coupon.find(query).lean().exec();
         if (!coupons.length) {
             return res.status(404).json({ message: "No active coupons found" });
         }
@@ -480,8 +475,6 @@ export const getUsedCouponsforMap = async (req, res, next) => {
     }
 };
 
-
-
 export const getScannedCouponsByEmail = async (req, res, next) => {
     try {
         const { scannedEmail, productName } = req.query;
@@ -566,10 +559,7 @@ export const getCouponsByScannedEmail = async (req, res, next) => {
 
 export const getActiveCouponsExcel = async (req, res, next) => {
     try {
-        let todayStart = new Date();
-        todayStart.setHours(0, 0, 0);
-
-        let CouponArr = await Coupon.find({ maximumNoOfUsersAllowed: 1 }).lean().exec();
+        let CouponArr = await Coupon.find({}).lean().exec();
 
         // Prepare coupon data for Excel
         const excelData = [];
@@ -820,7 +810,7 @@ export const addMultipleCoupons = async (req, res, next) => {
 //     }
 // };
 
-export const applyCoupon = async (req, res, next) => {
+export const applyCouponwithOutSession = async (req, res, next) => {
     try {
         const { id, latitude, longitude } = req.body;
         const { userId, name, email } = req.user;
@@ -876,54 +866,84 @@ export const applyCoupon = async (req, res, next) => {
     }
 };
 
-const processPoints = async (UserObj, updatedCoupon, points, name, CouponObj) => {
+const processPointswithOutSession = async (UserObj, updatedCoupon, points, name, CouponObj) => {
     const pointDescription = `Coupon earned ${points} points by scanning ${updatedCoupon.name} ${updatedCoupon.productName} (${UserObj.name}).`;
 
     // Calculate new accumulated points
     const totalAccumulatedPoints = UserObj.accumulatedPoints + points;
 
-    // Calculate how many diamonds can be created (1 diamond per 2000 points)
+    // Convert points to diamonds (1 diamond = 2000 points)
     const newDiamonds = Math.floor(totalAccumulatedPoints / 2000);
-
-    // Remaining points after conversion to diamonds
     const remainingPoints = totalAccumulatedPoints % 2000;
 
-    // Update user points, diamonds, and accumulated points atomically
-    await Users.bulkWrite([
-        {
-            updateOne: {
-                filter: { _id: UserObj._id },
-                update: {
-                    $inc: {
-                        points: points, // Increment points
-                        totalPointsEarned: points, // Increment total points earned
-                        diamonds: newDiamonds, // Increment diamonds if any
+    // Prepare diamond description if needed
+    const diamondDescription = `${newDiamonds} diamonds were earned by converting ${points} points from scanning ${updatedCoupon.name} ${updatedCoupon.productName} (${UserObj.name}).`;
+
+    // Perform all main user-related updates in parallel
+    await Promise.all([
+        Users.bulkWrite([
+            {
+                updateOne: {
+                    filter: { _id: UserObj._id },
+                    update: {
+                        $inc: {
+                            points,
+                            totalPointsEarned: points,
+                            diamonds: newDiamonds,
+                        },
+                        $set: { accumulatedPoints: remainingPoints },
                     },
-                    $set: { accumulatedPoints: remainingPoints }, // Store remaining points
                 },
             },
-        },
+        ]),
+        activityLogsModel.create([
+            {
+                userId: UserObj._id,
+                type: "Scanned Coupon",
+                createdAt: new Date(),
+            },
+        ]),
+        createPointlogs(
+            UserObj._id,
+            points,
+            pointTransactionType.CREDIT,
+            pointDescription,
+            "Coupon",
+            "success"
+        ),
+        ...(newDiamonds > 0
+            ? [
+                  createPointlogs(
+                      UserObj._id,
+                      newDiamonds,
+                      pointTransactionType.CREDIT,
+                      diamondDescription,
+                      "Coupon",
+                      "success",
+                      "Diamond"
+                  ),
+              ]
+            : []),
     ]);
 
-    // Insert activity log
-    await activityLogsModel.create([{ userId: UserObj._id, type: "Scanned Coupon", createdAt: new Date() }]);
-
-    // Create point logs
-    await createPointlogs(UserObj._id, points, pointTransactionType.CREDIT, pointDescription, "Coupon", "success");
-
-    if (newDiamonds > 0) {
-        const diamondDescription = `${newDiamonds} diamonds were earned by converting ${points} points from scanning ${updatedCoupon.name} ${updatedCoupon.productName} (${UserObj.name}).`;
-
-        await createPointlogs(UserObj._id, newDiamonds, pointTransactionType.CREDIT, diamondDescription, "Coupon", "success", "Diamond");
-    }
-
-    // Handle contractor points
+    // Contractor reward processing (runs after user logic)
     if (UserObj.contractor?.phone) {
-        await handleContractorPoints(UserObj.contractor.phone, UserObj._id, points, name, CouponObj);
+        try {
+            await handleContractorPoints(
+                UserObj.contractor.phone,
+                UserObj._id,
+                points,
+                name,
+                CouponObj
+            );
+        } catch (error) {
+            console.error("Error in contractor points processing:", error);
+        }
     }
 };
 
-const handleContractorPoints = async (phone, carpenterId, points, couponName, CouponObj) => {
+
+const handleContractorPointswithOutSession = async (phone, carpenterId, points, couponName, CouponObj) => {
     if (points <= 1) return;
 
     const ContractorObj = await Users.findOne({ phone, role: "CONTRACTOR" }).lean();
@@ -946,6 +966,198 @@ const handleContractorPoints = async (phone, carpenterId, points, couponName, Co
         await sendContractorNotification(ContractorObj._id, contractorPoints, couponName);
     }
 };
+
+
+export const applyCoupon = async (req, res, next) => {
+    const session = await mongoose.startSession();
+
+    try {
+        session.startTransaction();
+
+        const { id, latitude, longitude } = req.body;
+        const { userId, name, email } = req.user;
+
+        const findArr = mongoose.isValidObjectId(id) ? [{ _id: id }, { name: id }] : [{ name: id }];
+        const CouponObj = await Coupon.findOne({ $or: findArr }).session(session);
+
+        if (!CouponObj) {
+            await session.abortTransaction();
+            session.endSession();
+            return res.status(404).json({ message: "Coupon not found" });
+        }
+
+        const updatedCoupon = await Coupon.findOneAndUpdate(
+            { _id: CouponObj._id, maximumNoOfUsersAllowed: 1 },
+            {
+                $set: {
+                    maximumNoOfUsersAllowed: 0,
+                    carpenterId: userId,
+                    carpenterPoints: CouponObj.value,
+                    scannedUserName: name,
+                    scannedEmail: email,
+                    location: { type: "Point", coordinates: [longitude, latitude] },
+                },
+            },
+            { new: true, session }
+        );
+
+        if (!updatedCoupon) {
+            await session.abortTransaction();
+            session.endSession();
+            return res.status(400).json({ message: "Coupon already applied!" });
+        }
+
+        const UserObj = await Users.findById(userId).session(session);
+
+        if (!UserObj) {
+            await session.abortTransaction();
+            session.endSession();
+            return res.status(404).json({ message: "User not found" });
+        }
+
+        const points = updatedCoupon.value;
+        let responseMessage = "Better luck next time";
+
+        if (points > 0) {
+            await processPoints(UserObj, updatedCoupon, points, name, CouponObj, session);
+            responseMessage = "Coupon applied";
+        }
+
+        await session.commitTransaction();
+        session.endSession();
+        return res.status(200).json({ message: responseMessage, success: true, points });
+
+    } catch (err) {
+        await session.abortTransaction();
+        session.endSession();
+        console.error("Error in applyCoupon:", err);
+        next(err);
+    }
+};
+
+const processPoints = async (UserObj, updatedCoupon, points, name, CouponObj, session) => {
+    const pointDescription = `Coupon earned ${points} points by scanning ${updatedCoupon.name} ${updatedCoupon.productName} (${UserObj.name}).`;
+
+    const totalAccumulatedPoints = UserObj.accumulatedPoints + points;
+    const newDiamonds = Math.floor(totalAccumulatedPoints / 2000);
+    const remainingPoints = totalAccumulatedPoints % 2000;
+
+    const diamondDescription = `${newDiamonds} diamonds were earned by converting ${points} points from scanning ${updatedCoupon.name} ${updatedCoupon.productName} (${UserObj.name}).`;
+
+    await Promise.all([
+        Users.bulkWrite([
+            {
+                updateOne: {
+                    filter: { _id: UserObj._id },
+                    update: {
+                        $inc: {
+                            points,
+                            totalPointsEarned: points,
+                            diamonds: newDiamonds,
+                        },
+                        $set: { accumulatedPoints: remainingPoints },
+                    },
+                },
+            },
+        ], { session }),
+
+        activityLogsModel.create([{
+            userId: UserObj._id,
+            type: "Scanned Coupon",
+            createdAt: new Date(),
+        }], { session }),
+
+        createPointlogsSession(
+            UserObj._id,
+            points,
+            pointTransactionType.CREDIT,
+            pointDescription,
+            "Coupon",
+            "success",
+            null,
+            session
+        ),
+
+        ...(newDiamonds > 0
+            ? [
+                createPointlogsSession(
+                      UserObj._id,
+                      newDiamonds,
+                      pointTransactionType.CREDIT,
+                      diamondDescription,
+                      "Coupon",
+                      "success",
+                      "Diamond",
+                      session
+                  ),
+              ]
+            : []),
+    ]);
+
+    // Contractor reward
+    if (UserObj.contractor?.phone) {
+        try {
+            await handleContractorPoints(
+                UserObj.contractor.phone,
+                UserObj._id,
+                points,
+                name,
+                CouponObj,
+                session
+            );
+        } catch (error) {
+            console.error("Error in contractor points processing:", error);
+        }
+    }
+};
+
+const handleContractorPoints = async (phone, carpenterId, points, couponName, CouponObj, session) => {
+    if (points <= 1) return;
+
+    const ContractorObj = await Users.findOne({ phone, role: "CONTRACTOR" }).session(session).lean();
+
+    if (!ContractorObj) return;
+
+    const contractorPoints = Math.floor(points * 0.5);
+    const contractorPointDescription = `Earned ${contractorPoints} points (50% of coupon points to Contractor: ${ContractorObj.name} from ${couponName}) ${CouponObj.name} ${CouponObj.productName}.`;
+
+    await Users.findByIdAndUpdate(
+        ContractorObj._id,
+        {
+            $inc: {
+                points: contractorPoints,
+                totalPointsEarned: contractorPoints,
+            },
+        },
+        { session }
+    );
+
+    await Coupon.findByIdAndUpdate(
+        CouponObj._id,
+        {
+            $set: {
+                contractorId: ContractorObj._id,
+                contractorPoints,
+            },
+        },
+        { session }
+    );
+
+    await createPointlogsSession(
+        ContractorObj._id,
+        contractorPoints,
+        pointTransactionType.CREDIT,
+        contractorPointDescription,
+        "Royalty",
+        "success",
+        null,
+        session
+    );
+
+    // Notifications can optionally be done after committing
+    await sendContractorNotification(ContractorObj._id, contractorPoints, couponName);
+};
+
 
 const sendContractorNotification = async (contractorId, contractorPoints, couponName) => {
     try {

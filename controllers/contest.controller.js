@@ -1263,6 +1263,27 @@ export const autoJoinContest = async (contestId, userId) => {
     }
 };
 
+export const createPointlogsForRedeemContest = async (req, res, next) => {
+    const { userId, contestId, count } = req.body;
+
+    try {
+        const ContestObj = await Contest.findOne({ _id: contestId });
+
+        if (!ContestObj) {
+            return res.status(404).json({ message: "Contest not found" });
+        }
+
+        let pointDescription = ContestObj.name + " Contest Joined with " + ContestObj.points + " Points";
+        let mobileDescription = "Contest";
+
+        for (let i = 0; i < count; i++) {
+            await createPointlogs(userId, ContestObj.points, pointTransactionType.DEBIT, pointDescription, mobileDescription, "success");
+        }
+    } catch (error) {
+        console.log(error);
+    }
+};
+
 export const joinContestByCoupon = async (req, res, next) => {
     try {
         const { id: contestId } = req.params;
@@ -1972,8 +1993,6 @@ const toCamelCase = (str) => {
         .map((word, index) => (index === 0 ? word.charAt(0).toUpperCase() + word.slice(1).toLowerCase() : word.charAt(0).toUpperCase() + word.slice(1).toLowerCase()))
         .join("");
 };
-
-
 
 export const sendContestWinnerNotifications = async (req, res, next) => {
     const { contestId } = req.params;

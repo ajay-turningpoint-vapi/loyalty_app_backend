@@ -54,7 +54,7 @@ export const pointHistoryDelete = async (req, res) => {
     }
 };
 
-export const createPointlogstemp = async (userId, amount, type, description, mobileDescription, status = "pending", pointType = "Point", additionalInfo = {}, timestamp = null) => {
+export const createPointlogstime = async (userId, amount, type, description, mobileDescription, status = "pending", pointType = "Point", additionalInfo = {}, timestamp = null) => {
     const logTime = timestamp ? new Date(timestamp) : new Date();
 
     const historyLog = {
@@ -97,6 +97,44 @@ export const createPointlogs = async (userId, amount, type, description, mobileD
         console.error("Error saving point history:", err.message);
     }
 };
+
+
+export const createPointlogsSession = async (
+    userId,
+    amount,
+    type,
+    description,
+    mobileDescription,
+    status = "pending",
+    pointType = "Point",
+    additionalInfo = {},
+    session = null // 👈 allow passing session
+) => {
+    const historyLog = {
+        transactionId: new Date().getTime().toString(),
+        userId,
+        amount,
+        type,
+        description,
+        mobileDescription,
+        status,
+        pointType,
+        additionalInfo,
+    };
+
+    try {
+        const logDoc = new pointHistory(historyLog);
+        if (session) {
+            await logDoc.save({ session }); // ✅ use session
+        } else {
+            await logDoc.save();
+        }
+    } catch (err) {
+        console.error("Error saving point history:", err.message);
+        throw err; // ❗ rethrow to allow rollback if used inside a transaction
+    }
+};
+
 
 export const compensationPoints = async (req, res) => {
     const {
@@ -638,25 +676,21 @@ export const updatePointHistoryStatus = async (req, res, next) => {
 
         if (status === "reject") {
             // Refund diamonds
-            await userModel.findByIdAndUpdate(user._id, {
-                $inc: { diamonds: pointHistoryObj.amount }
-            }, { new: true });
+            await userModel.findByIdAndUpdate(
+                user._id,
+                {
+                    $inc: { diamonds: pointHistoryObj.amount },
+                },
+                { new: true }
+            );
 
             let mobileDescription = "Rejection";
-            await createPointlogs(
-                pointHistoryObj.userId,
-                pointHistoryObj.amount,
-                pointTransactionType.CREDIT,
-                `Diamonds returned due to rejection of transaction by admin because ${reason}`,
-                mobileDescription,
-                "success",
-                reason
-            );
+            await createPointlogs(pointHistoryObj.userId, pointHistoryObj.amount, pointTransactionType.CREDIT, `Diamonds returned due to rejection of transaction by admin because ${reason}`, mobileDescription, "success", reason);
 
             // Update order status to reject
             await redeemableOrderHistoryModel.findByIdAndUpdate(orderId, { status: "reject" });
-        } 
-        
+        }
+
         if (status === "delivered") {
             await redeemableOrderHistoryModel.findByIdAndUpdate(orderId, {
                 status: "delivered",
@@ -682,4 +716,3 @@ export const updatePointHistoryStatus = async (req, res, next) => {
         next(err);
     }
 };
-

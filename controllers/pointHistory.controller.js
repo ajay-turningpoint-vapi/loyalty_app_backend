@@ -54,7 +54,7 @@ export const pointHistoryDelete = async (req, res) => {
     }
 };
 
-export const createPointlogstime = async (userId, amount, type, description, mobileDescription, status = "pending", pointType = "Point", additionalInfo = {}, timestamp = null) => {
+export const createPointlogstWithTime = async (userId, amount, type, description, mobileDescription, status = "pending", pointType = "Point", additionalInfo = {}, timestamp = null) => {
     const logTime = timestamp ? new Date(timestamp) : new Date();
 
     const historyLog = {

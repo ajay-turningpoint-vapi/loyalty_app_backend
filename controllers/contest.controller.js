@@ -1037,6 +1037,11 @@ export const getContestAdmin = async (req, res, next) => {
                     ],
                 },
             },
+            {
+                $sort: {
+                    createdAt: -1,
+                },
+            },
         ];
 
         let getContest = await Contest.aggregate(pipeline);

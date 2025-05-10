@@ -35,6 +35,7 @@ import userContest from "../models/userContest";
 import reelLikesModel from "../models/reelLikes.model";
 import userModel from "../models/user.model";
 import { image } from "qr-image";
+import { is } from "date-fns/locale";
 // import { httpRequestDuration, httpRequestErrors, httpRequestsTotal } from "../services/metricsService";
 
 const geolib = require("geolib");
@@ -870,6 +871,7 @@ export const updateUserProfile = async (req, res, next) => {
 export const updateUserProfileAdmin = async (req, res, next) => {
     try {
         const { userId, isBlocked, isActive, kycStatus, role, businessName, contractor, ...updateFields } = req.body;
+        console.log("updateFields", req.body);
 
         if (!userId) {
             return res.status(400).json({ message: "User ID is required", success: false });
@@ -883,30 +885,23 @@ export const updateUserProfileAdmin = async (req, res, next) => {
 
         let updateData = { ...updateFields };
         const isBusinessNameChanging = businessName !== undefined && businessName !== userObj.businessName;
-
-        if (role === "CARPENTER" && isBusinessNameChanging) {
+        if (role === "CARPENTER") {
             updateData.role = role;
             updateData.businessName = null;
-            // updateData.contractor = null;
             updateData.contractor = {
-                businessName: contractor.businessName || "",
-                name: contractor.name || "",
-                phone: contractor.phone || "",
+                businessName: contractor?.businessName || "",
+                name: contractor?.name || "",
+                phone: contractor?.phone || "",
             };
-        }
-
-        if (role === "CONTRACTOR" && isBusinessNameChanging) {
+        } else if (role === "CONTRACTOR") {
             updateData.role = role;
             updateData.businessName = businessName;
             updateData.contractor = null;
         } else if (isBusinessNameChanging) {
             const previousBusinessName = userObj.businessName;
-
             await Users.updateMany({ "contractor.businessName": previousBusinessName, contractor: { $ne: null } }, { $set: { "contractor.businessName": businessName } });
-
             updateData.businessName = businessName;
         }
-
         // Handle block/unblock toggle
         if (isBlocked !== undefined) {
             updateData.isBlocked = isBlocked;
@@ -954,7 +949,7 @@ export const updateUserProfileAdmin = async (req, res, next) => {
         }
 
         // Update user in DB
-        const updatedUser = await Users.findByIdAndUpdate(userId, updateData, { new: true }).exec();
+        const updatedUser = await Users.findByIdAndUpdate(userId, { $set: updateData }, { new: true }).exec();
 
         res.status(200).json({ message: "User profile updated successfully", data: updatedUser, success: true });
     } catch (err) {

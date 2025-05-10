@@ -137,6 +137,7 @@ export const getAllCoupons = async (req, res, next) => {
         let totalCount = await Coupon.countDocuments(query); // Get total count of documents matching query
 
         let couponsArr = await Coupon.find(query)
+            .populate("carpenterId", "name")
             .sort({ [sortBy]: sortOrder }) // Dynamic sorting based on allowed fields
             .skip((page - 1) * pageSize) // Skip documents based on pagination
             .limit(pageSize) // Limit the number of documents per page
@@ -466,7 +467,7 @@ export const getUsedCouponsforMap = async (req, res, next) => {
         }
 
         // Fetch the coupons based on the dynamic query
-        let CouponArr = await Coupon.find(query).lean().exec();
+        let CouponArr = await Coupon.find(query).populate("carpenterId","name").lean().exec();
 
         res.status(200).json({ message: "List of scanned coupons", data: CouponArr, success: true });
     } catch (error) {
@@ -514,6 +515,53 @@ export const getScannedCouponsByEmail = async (req, res, next) => {
         });
     } catch (error) {
         console.error(error);
+        next(error);
+    }
+};
+
+export const getScannedCouponsByCarpenterId = async (req, res, next) => {
+    try {
+        const { carpenterId, productName } = req.query;
+
+        if (!carpenterId || !mongoose.Types.ObjectId.isValid(carpenterId)) {
+            return res.status(400).json({ message: "Valid carpenterId is required", success: false });
+        }
+
+        // Build query
+        let query = { carpenterId: new mongoose.Types.ObjectId(carpenterId) };
+
+        if (productName) {
+            query.productName = { $regex: productName, $options: "i" }; // case-insensitive product match
+        }
+
+        // Fetch scanned coupons based on carpenterId and optional productName
+        let scannedCoupons = await Coupon.find(query).populate("carpenterId","name").lean().exec();
+
+        // Get product totals (always based on carpenterId only)
+        const productCounts = await Coupon.aggregate([
+            {
+                $match: {
+                    carpenterId: new mongoose.Types.ObjectId(carpenterId),
+                },
+            },
+            {
+                $group: {
+                    _id: "$productName",
+                    total: { $sum: 1 },
+                },
+            },
+        ]);
+
+        res.status(200).json({
+            message: "List of scanned coupons",
+            data: {
+                scannedCoupons,
+                productTotals: productCounts,
+            },
+            success: true,
+        });
+    } catch (error) {
+        console.error("[ERROR] Failed to fetch scanned coupons:", error);
         next(error);
     }
 };
@@ -1245,53 +1293,120 @@ export const getScannedCouponsWithPointMatch = async (req, res, next) => {
         next(error);
     }
 };
+export const getScannedCouponsWithPointMatchContractor = async (req, res, next) => {
+    try {
+        const { scannedEmail } = req.query;
+
+        if (!scannedEmail) {
+            return res.status(400).json({ message: "Scanned email is required", success: false });
+        }
+
+        // Step 1: Find user by scannedEmail
+        const user = await Users.findOne({ email: scannedEmail }).lean();
+        if (!user) {
+            return res.status(404).json({ message: "User not found with this email", success: false });
+        }
+
+        console.log("[INFO] User found:", user._id, user.name);
+
+        // Step 2: Get contractor.businessName from user
+        const contractorBusinessName = user?.contractor?.businessName;
+        if (!contractorBusinessName) {
+            return res.status(400).json({ message: "Contractor business name not found in user data", success: false });
+        }
+
+        // Step 3: Find contractor user by businessName
+        const ContractorObj = await Users.findOne({ businessName: contractorBusinessName }).lean();
+        if (!ContractorObj) {
+            return res.status(404).json({ message: "Contractor user not found", success: false });
+        }
+
+        console.log("[INFO] Contractor found:", ContractorObj._id, ContractorObj.name || ContractorObj.userName);
+
+        // Step 4: Find all scanned coupons
+        const coupons = await Coupon.find({ scannedEmail }).lean();
+        if (coupons.length === 0) {
+            return res.status(200).json({ message: "No coupons found", data: [], success: true });
+        }
+
+        console.log("coupons", coupons.length, "COUPONS_FOUND");
+
+        // Step 5: Create point logs for contractor
+        for (const CouponObj of coupons) {
+            const couponName = CouponObj.name || "Unknown Coupon";
+            const productName = CouponObj.productName || "";
+            const contractorPoints = Math.floor((CouponObj.value || 0) * 0.5); // Applying Math.floor to round down
+
+            if (contractorPoints > 0) {
+                const contractorPointDescription = `Earned ${contractorPoints} points (50% of coupon points) to Contractor: ${ContractorObj?.name || "Unknown Contractor"} from ${couponName} ${productName}.`;
+
+                const log = await createPointlogstWithTime(
+                    ContractorObj._id.toString(),
+                    contractorPoints,
+                    pointTransactionType.CREDIT,
+                    contractorPointDescription,
+                    "Royalty", // Source
+                    "success", // Status
+                    "Point", // Type
+                    { couponId: CouponObj._id },
+                    CouponObj.updatedAt
+                );
+
+                console.log("[LOG CREATED] Contractor Point Log:", log);
+            }
+        }
+
+        res.status(200).json({
+            message: "Contractor point logs created successfully",
+            data: coupons,
+            totalCoupons: coupons.length,
+            success: true,
+        });
+    } catch (error) {
+        console.error("[ERROR] Failed to process contractor point logs:", error);
+        next(error);
+    }
+};
 
 export const getScannedCouponsWithPointMatchForAllUsers = async (req, res, next) => {
     try {
-        console.log("[INFO] Request received to fetch scanned coupons for all users");
+        console.log("[INFO] Request received to fetch scanned coupons for all users using carpenterId");
 
-        // Step 1: Get all distinct scannedEmail values from coupons
-        const distinctEmails = await Coupon.distinct("scannedEmail");
+        // Step 1: Get all distinct carpenterIds from coupons
+        const distinctCarpenters = await Coupon.distinct("carpenterId");
 
-        if (!distinctEmails || distinctEmails.length === 0) {
-            console.warn("[WARN] No scannedEmail found in any coupon.");
-            return res.status(404).json({ message: "No scanned emails found", success: false });
+        if (!distinctCarpenters || distinctCarpenters.length === 0) {
+            console.warn("[WARN] No carpenterId found in any coupon.");
+            return res.status(404).json({ message: "No carpenter data found", success: false });
         }
 
         let totalCouponsProcessed = 0;
         let globalTotalValue = 0;
 
-        for (const scannedEmail of distinctEmails) {
-            // Step 2: Find user by scannedEmail
-            const user = await Users.findOne({ email: scannedEmail });
+        for (const carpenterId of distinctCarpenters) {
+            // Step 2: Fetch all coupons for this carpenter and populate user
+            const coupons = await Coupon.find({ carpenterId })
+                .populate("carpenterId", "name email") // populate selected fields
+                .lean();
+
+            if (!coupons.length) continue;
+
+            const user = coupons[0]?.carpenterId;
             if (!user) {
-                console.warn("[WARN] No user found with scannedEmail:", scannedEmail);
+                console.warn(`[WARN] No user populated for carpenterId: ${carpenterId}`);
                 continue;
             }
 
-            // Step 3: Find all matching coupons
-            const coupons = await Coupon.find({ scannedEmail }).lean();
-            console.log(`[INFO] Found ${coupons.length} coupons for user: ${user.userName || user.name} (${scannedEmail})`);
+            console.log(`[INFO] Found ${coupons.length} coupons for user: ${user.name} (${user.email})`);
 
-            if (coupons.length === 0) continue;
-
-            // Step 4: Create point logs for each coupon
+            // Step 3: Create point logs for each coupon
             for (const [index, coupon] of coupons.entries()) {
                 const points = coupon.value || 0;
-                const pointDescription = `Coupon earned ${points} points by scanning ${coupon.name} ${coupon.productName} (${coupon.scannedUserName}).`;
+                const pointDescription = `Coupon earned ${points} points by scanning ${coupon.productName} - ${coupon.name} (${user.name}) `;
 
-                const pointResponse = await createPointlogstWithTime(
-                    user._id.toString(),
-                    points,
-                    pointTransactionType.CREDIT,
-                    pointDescription,
-                    "Coupon",
-                    "success",
-                    "Point",
-                    { couponId: coupon._id },
-                    coupon.updatedAt
-                );
-                console.log(`[LOG] Created point log ${index + 1}/${coupons.length} for user ${scannedEmail}`);
+                await createPointlogstWithTime(user._id.toString(), points, pointTransactionType.CREDIT, pointDescription, "Coupon", "success", "Point", { couponId: coupon._id }, coupon.updatedAt);
+
+                console.log(`[LOG] Created point log ${index + 1}/${coupons.length} for user ${user.email}`);
                 globalTotalValue += points;
             }
 
@@ -1307,12 +1422,12 @@ export const getScannedCouponsWithPointMatchForAllUsers = async (req, res, next)
             success: true,
         });
     } catch (error) {
-        console.error("[ERROR] An error occurred while processing all scanned coupons:", error);
+        console.error("[ERROR] An error occurred while processing coupons by carpenterId:", error);
         next(error);
     }
 };
 
-export const getScannedCouponsWithPointMatchContractorForAllUsers = async (req, res, next) => {
+export const getScannedCouponsWithPointMatchContractorForAllUsersOld = async (req, res, next) => {
     try {
         console.log("[INFO] Request received to process contractor point logs for all scanned users.");
 
@@ -1387,6 +1502,7 @@ export const getScannedCouponsWithPointMatchContractorForAllUsers = async (req, 
         res.status(200).json({
             message: "Contractor point logs created successfully for all users",
             totalCouponsProcessed,
+
             totalPointsCredited,
             success: true,
         });
@@ -1396,75 +1512,70 @@ export const getScannedCouponsWithPointMatchContractorForAllUsers = async (req, 
     }
 };
 
-
-
-export const getScannedCouponsWithPointMatchContractor = async (req, res, next) => {
+export const getScannedCouponsWithPointMatchContractorForAllUsers = async (req, res, next) => {
     try {
-        const { scannedEmail } = req.query;
+        console.log("[INFO] Request received to process contractor point logs using contractorId");
 
-        if (!scannedEmail) {
-            return res.status(400).json({ message: "Scanned email is required", success: false });
+        // Step 1: Get all distinct contractorIds from coupons
+        const distinctContractorIds = await Coupon.distinct("contractorId");
+
+        if (!distinctContractorIds || distinctContractorIds.length === 0) {
+            console.warn("[WARN] No contractorId found in any coupon.");
+            return res.status(404).json({ message: "No contractor data found", success: false });
         }
 
-        // Step 1: Find user by scannedEmail
-        const user = await Users.findOne({ email: scannedEmail }).lean();
-        if (!user) {
-            return res.status(404).json({ message: "User not found with this email", success: false });
-        }
+        let totalCouponsProcessed = 0;
+        let totalPointsCredited = 0;
 
-        console.log("[INFO] User found:", user._id, user.name);
+        for (const contractorId of distinctContractorIds) {
+            // Step 2: Find all coupons for the contractor and populate contractor info
+            const coupons = await Coupon.find({ contractorId })
+                .populate("contractorId", "name email businessName") // populate contractor user fields
+                .lean();
 
-        // Step 2: Get contractor.businessName from user
-        const contractorBusinessName = user?.contractor?.businessName;
-        if (!contractorBusinessName) {
-            return res.status(400).json({ message: "Contractor business name not found in user data", success: false });
-        }
-
-        // Step 3: Find contractor user by businessName
-        const ContractorObj = await Users.findOne({ businessName: contractorBusinessName }).lean();
-        if (!ContractorObj) {
-            return res.status(404).json({ message: "Contractor user not found", success: false });
-        }
-
-        console.log("[INFO] Contractor found:", ContractorObj._id, ContractorObj.name || ContractorObj.userName);
-
-        // Step 4: Find all scanned coupons
-        const coupons = await Coupon.find({ scannedEmail }).lean();
-        if (coupons.length === 0) {
-            return res.status(200).json({ message: "No coupons found", data: [], success: true });
-        }
-
-        console.log("coupons", coupons.length, "COUPONS_FOUND");
-
-        // Step 5: Create point logs for contractor
-        for (const CouponObj of coupons) {
-            const couponName = CouponObj.name || "Unknown Coupon";
-            const productName = CouponObj.productName || "";
-            const contractorPoints = Math.floor((CouponObj.value || 0) * 0.5); // Applying Math.floor to round down
-
-            if (contractorPoints > 0) {
-                const contractorPointDescription = `Earned ${contractorPoints} points (50% of coupon points) to Contractor: ${ContractorObj?.name || "Unknown Contractor"} from ${couponName} ${productName}.`;
-
-                const log = await createPointlogstWithTime(
-                    ContractorObj._id.toString(),
-                    contractorPoints,
-                    pointTransactionType.CREDIT,
-                    contractorPointDescription,
-                    "Royalty", // Source
-                    "success", // Status
-                    "Point", // Type
-                    { couponId: CouponObj._id },
-                    CouponObj.updatedAt
-                );
-
-                console.log("[LOG CREATED] Contractor Point Log:", log);
+            if (!coupons || coupons.length === 0) {
+                console.log(`[INFO] No coupons found for contractorId: ${contractorId}`);
+                continue;
             }
+
+            const contractor = coupons[0]?.contractorId;
+            if (!contractor) {
+                console.warn(`[SKIPPED] No contractor user populated for ID: ${contractorId}`);
+                continue;
+            }
+
+            for (const couponObj of coupons) {
+                // Change to couponObj
+                const couponName = couponObj.name || "Unknown Coupon";
+                const productName = couponObj.productName || "";
+                const contractorPoints = Math.floor((couponObj.value || 0) * 0.5);
+
+                if (contractorPoints > 0) {
+                    const contractorPointDescription = `Contractor ${contractor.name} got ${contractorPoints} points (50% of coupon points) from ${productName} - ${couponName}`;
+                    const log = await createPointlogstWithTime(
+                        contractor._id.toString(),
+                        contractorPoints,
+                        pointTransactionType.CREDIT,
+                        contractorPointDescription,
+                        "Royalty",
+                        "success",
+                        "Point",
+                        { couponId: couponObj._id },
+                        couponObj.updatedAt
+                    );
+
+                    totalPointsCredited += contractorPoints;
+                    console.log(`[LOG CREATED] Contractor Point Log for ${contractor.email}:`, log);
+                }
+            }
+
+            totalCouponsProcessed += coupons.length;
         }
 
         res.status(200).json({
-            message: "Contractor point logs created successfully",
-            data: coupons,
-            totalCoupons: coupons.length,
+            message: "Contractor point logs created successfully for all users",
+            totalCouponsProcessed,
+            totalPointsCredited,
             success: true,
         });
     } catch (error) {

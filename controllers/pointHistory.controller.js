@@ -54,6 +54,25 @@ export const pointHistoryDelete = async (req, res) => {
     }
 };
 
+
+export const pointHistoryDeleteAll = async (req, res) => {
+    try {
+        const result = await pointHistory.deleteMany({
+            mobileDescription: { $in: ["Coupon", "Royalty"] },
+        });
+
+        res.status(200).json({
+            message: "Matching point history records deleted successfully",
+            deletedCount: result.deletedCount,
+            success: true,
+        });
+    } catch (error) {
+        console.error("[ERROR] Failed to delete point history:", error);
+        res.status(500).json({ message: "Internal server error", success: false });
+    }
+};
+
+
 export const createPointlogstWithTime = async (userId, amount, type, description, mobileDescription, status = "pending", pointType = "Point", additionalInfo = {}, timestamp = null) => {
     const logTime = timestamp ? new Date(timestamp) : new Date();
 

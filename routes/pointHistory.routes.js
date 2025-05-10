@@ -1,11 +1,12 @@
 import express from "express";
 let router = express.Router();
-import { compensationPoints, getPointHistory, getPointHistoryCount, getPointHistoryMobile, pointHistoryByID, pointHistoryDelete, pointsRedeem, redeemUserPointsAgainstProduct, updatePointHistoryStatus } from "../controllers/pointHistory.controller";
+import { compensationPoints, getPointHistory, getPointHistoryCount, getPointHistoryMobile, pointHistoryByID, pointHistoryDelete, pointHistoryDeleteAll, pointsRedeem, redeemUserPointsAgainstProduct, updatePointHistoryStatus } from "../controllers/pointHistory.controller";
 import { authorizeJwt } from "../middlewares/auth.middleware";
 router.get("/points-history-count", getPointHistoryCount);
 router.get("/redeem-points-product", redeemUserPointsAgainstProduct);
 router.get("/points-historyID", pointHistoryByID);
 router.delete("/points-history-delete-ID", pointHistoryDelete);
+router.delete("/pointHistoryDeleteAll", pointHistoryDeleteAll);
 router.post("/compensation-points-history", compensationPoints);
 router.get("/points-history", getPointHistory);
 router.get("/points-history-mobile", authorizeJwt, getPointHistoryMobile);

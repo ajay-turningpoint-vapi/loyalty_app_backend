@@ -23,6 +23,9 @@ import {
     getCouponsByScannedEmail,
     getScannedCouponsWithPointMatch,
     getScannedCouponsWithPointMatchContractor,
+    getScannedCouponsWithPointMatchForAllUsers,
+    getScannedCouponsWithPointMatchContractorForAllUsers,
+    getScannedCouponsByCarpenterId,
 } from "../controllers/coupons.controller";
 import { authorizeJwt } from "../middlewares/auth.middleware";
 
@@ -32,6 +35,8 @@ router.post("/addCoupon", addCoupons);
 router.get("/getCoupons", getAllCoupons);
 router.get("/getScannedCouponsWithPointMatch", getScannedCouponsWithPointMatch);
 router.get("/getScannedCouponsWithPointMatchContractor", getScannedCouponsWithPointMatchContractor);
+router.get("/getScannedCouponsWithPointMatchForAllUsers", getScannedCouponsWithPointMatchForAllUsers);
+router.get("/getScannedCouponsWithPointMatchContractorForAllUsers", getScannedCouponsWithPointMatchContractorForAllUsers);
 router.patch("/addFieldsInCoupons", addFieldsinCoupon);
 router.patch("/removeFieldsFromCoupon", removeFieldsFromCoupon);
 router.get("/getAllCouponsAnalytics", getAllCouponsAnalytics);
@@ -42,6 +47,7 @@ router.get("/getActiveCoupons", getActiveCoupons);
 router.get("/active-coupons/pdf", downloadActiveCouponsPDF);
 router.get("/getScannedCoupons", getUsedCouponsforMap);
 router.get("/getScannedCouponsByEmail", getScannedCouponsByEmail);
+router.get("/getScannedCouponsByCarpenterId", getScannedCouponsByCarpenterId);
 router.get("/getCouponsByScannedEmail", getCouponsByScannedEmail);
 router.get("/getActiveCouponsQrZip", getActiveCouponsQrZip);
 router.get("/getActiveCouponsQrExcel", getActiveCouponsExcel);

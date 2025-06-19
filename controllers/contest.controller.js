@@ -105,8 +105,8 @@ export const addContest = async (req, res, next) => {
                 }
             })
         );
-        await redisClient.del("currentContest");
-        console.log("🧹 Cleared Redis cache: currentContest");
+        
+       
 
         res.status(201).json({ message: "Contest Registered", success: true });
     } catch (err) {
@@ -302,7 +302,7 @@ export const getCurrentContestWorking = async (req, res, next) => {
     }
 };
 
-export const getCurrentContestwithoutCache = async (req, res, next) => {
+export const getCurrentContes= async (req, res, next) => {
     try {
         let pipeline = [
             {
@@ -428,138 +428,7 @@ export const getCurrentContestwithoutCache = async (req, res, next) => {
 };
 
 
-export const getCurrentContest = async (req, res, next) => {
-    try {
-        const cacheKey = "currentContest";
-        const cachedData = await redisClient.get(cacheKey);
 
-        // Serve from cache if available
-        if (cachedData) {
-            const parsed = JSON.parse(cachedData);
-
-            // Add user-specific data (join status) if user is present
-            if (req.user?.userId && parsed.length > 0) {
-                const userJoinStatus = await userContest.exists({
-                    contestId: parsed[0]._id,
-                    userId: req.user.userId,
-                    status: "join",
-                });
-                parsed[0].userJoinStatus = userJoinStatus != null;
-
-                const userJoinCount = await userContest.countDocuments({
-                    contestId: parsed[0]._id,
-                    userId: req.user.userId,
-                    status: "join",
-                });
-                parsed[0].userJoinCount = userJoinCount;
-            }
-
-            return res.status(200).json({ message: "getCurrentContest (from cache)", data: parsed, success: true });
-        }
-
-        // If not cached, run aggregation
-        const pipeline = [
-            {
-                $addFields: {
-                    combinedStartDateTime: {
-                        $dateFromString: {
-                            dateString: {
-                                $concat: [
-                                    { $dateToString: { date: "$startDate", format: "%Y-%m-%d" } },
-                                    "T",
-                                    "$startTime",
-                                    ":00",
-                                ],
-                            },
-                            timezone: "Asia/Kolkata",
-                        },
-                    },
-                    combinedEndDateTime: {
-                        $dateFromString: {
-                            dateString: {
-                                $concat: [
-                                    { $dateToString: { date: "$endDate", format: "%Y-%m-%d" } },
-                                    "T",
-                                    "$antimationTime",
-                                ],
-                            },
-                            timezone: "Asia/Kolkata",
-                        },
-                    },
-                },
-            },
-            {
-                $addFields: {
-                    status: {
-                        $cond: {
-                            if: {
-                                $and: [
-                                    { $gt: ["$combinedEndDateTime", new Date()] },
-                                    { $lt: ["$combinedStartDateTime", new Date()] },
-                                ],
-                            },
-                            then: "ACTIVE",
-                            else: "INACTIVE",
-                        },
-                    },
-                },
-            },
-            {
-                $match: {
-                    $and: [
-                        req.query.admin ? {} : { combinedEndDateTime: { $gt: new Date() } },
-                        { combinedStartDateTime: { $lt: new Date() } },
-                    ],
-                },
-            },
-            { $sort: { combinedEndDateTime: 1 } },
-            { $limit: 1 },
-        ];
-
-        let getCurrentContest = await Contest.aggregate(pipeline);
-
-        if (getCurrentContest.length > 0) {
-            const contestId = `${getCurrentContest[0]._id}`;
-
-            const utcDate = moment(getCurrentContest[0].combinedEndDateTime); // fixed field
-            const istDate = utcDate.clone().utcOffset("+05:30");
-
-            const prizeContestArray = await Prize.find({ contestId }).exec();
-            getCurrentContest[0].prizeArr = prizeContestArray;
-
-            if (req.user?.userId) {
-                const userJoinStatus = await userContest.exists({
-                    contestId,
-                    userId: req.user.userId,
-                    status: "join",
-                });
-                getCurrentContest[0].userJoinStatus = userJoinStatus != null;
-
-                const userJoinCount = await userContest.countDocuments({
-                    contestId,
-                    userId: req.user.userId,
-                    status: "join",
-                });
-                getCurrentContest[0].userJoinCount = userJoinCount;
-            }
-
-            // Cache the result without userJoinStatus and userJoinCount
-            const cacheCopy = JSON.parse(JSON.stringify(getCurrentContest)); // deep copy
-            if (cacheCopy[0]) {
-                delete cacheCopy[0].userJoinStatus;
-                delete cacheCopy[0].userJoinCount;
-            }
-
-            await redisClient.set(cacheKey, JSON.stringify(cacheCopy), {
-                EX: 43200, // 12 hours
-            });
-        }
-
-        res.status(200).json({ message: "getCurrentContest", data: getCurrentContest, success: true });
-    } catch (err) {
-        next(err);
-    }
-};
 
 
 export const getOpenContests = async (req, res) => {
@@ -919,7 +788,7 @@ export const updateById = async (req, res, next) => {
                 rank++;
             }
         }
-        await redisClient.del("currentContest");
+        
 
         res.status(200).json({ message: "Contest Updated", success: true });
     } catch (err) {
@@ -932,7 +801,7 @@ export const deleteById = async (req, res, next) => {
         let prizsObje = await Prize.deleteMany({ contestId: req.params.id }).exec();
         const ContestObj = await Contest.findByIdAndDelete(req.params.id).exec();
         if (!ContestObj) throw { status: 400, message: "Contest Not Found" };
-        await redisClient.del("currentContest");
+        
         res.status(200).json({ message: "Contest Deleted", success: true });
     } catch (err) {
         next(err);

@@ -2054,29 +2054,78 @@ export const registerAdmin = async (req, res, next) => {
         next(error);
     }
 };
-export const loginAdmin = async (req, res, next) => {
-    try {
-        const adminObj = await Users.findOne({ $or: [{ email: new RegExp(`^${req.body.email}$`) }, { phone: req.body.phone }], role: rolesObj.ADMIN })
-            .lean()
-            .exec();
+// export const loginAdmin = async (req, res, next) => {
+//     try {
+//         const adminObj = await Users.findOne({ $or: [{ email: new RegExp(`^${req.body.email}$`) }, { phone: req.body.phone }], role: rolesObj.ADMIN })
+//             .lean()
+//             .exec();
 
-        if (adminObj) {
-            const passwordCheck = await comparePassword(adminObj.password, req.body.password);
-            if (passwordCheck) {
-                let accessToken = await generateAccessJwt({ userId: adminObj._id, role: rolesObj.ADMIN, user: { name: adminObj.name, email: adminObj.email, phone: adminObj.phone, _id: adminObj._id, role: rolesObj.ADMIN } });
-                // let refreshToken = await generateRefreshJwt({ userId: adminObj._id, role: rolesObj.ADMIN, user: { name: adminObj.name, email: adminObj.email, phone: adminObj.phone, _id: adminObj._id } });
-                res.status(200).json({ message: "LogIn Successfull", token: accessToken });
-            } else {
-                throw { status: 401, message: "Invalid Password" };
-            }
-        } else {
-            throw { status: 401, message: "Admin Not Found" };
-        }
-    } catch (err) {
-        next(err);
-    }
-};
+//         if (adminObj) {
+//             const passwordCheck = await comparePassword(adminObj.password, req.body.password);
+//             if (passwordCheck) {
+//                 let accessToken = await generateAccessJwt({ userId: adminObj._id, role: rolesObj.ADMIN, user: { name: adminObj.name, email: adminObj.email, phone: adminObj.phone, _id: adminObj._id, role: rolesObj.ADMIN } });
+//                 // let refreshToken = await generateRefreshJwt({ userId: adminObj._id, role: rolesObj.ADMIN, user: { name: adminObj.name, email: adminObj.email, phone: adminObj.phone, _id: adminObj._id } });
+//                 res.status(200).json({ message: "LogIn Successfull", token: accessToken });
+//             } else {
+//                 throw { status: 401, message: "Invalid Password" };
+//             }
+//         } else {
+//             throw { status: 401, message: "Admin Not Found" };
+//         }
+//     } catch (err) {
+//         next(err);
+//     }
+// };
+
+
+
+
+
 // total customer and active customer
+
+
+export const loginAdmin = async (req, res, next) => {
+  try {
+    const adminObj = await Users.findOne({
+      $or: [
+        { email: new RegExp(`^${req.body.email}$`, 'i') }, // case-insensitive email match
+        { phone: req.body.phone }
+      ],
+      role: { $in: [rolesObj.ADMIN, rolesObj.SUPERADMIN] } // match either ADMIN or SUPERADMIN
+    })
+      .lean()
+      .exec();
+
+    if (adminObj) {
+      const passwordCheck = await comparePassword(adminObj.password, req.body.password);
+      if (passwordCheck) {
+        // Use the actual role from the user object
+        const userPayload = {
+          name: adminObj.name,
+          email: adminObj.email,
+          phone: adminObj.phone,
+          _id: adminObj._id,
+          role: adminObj.role
+        };
+
+        const accessToken = await generateAccessJwt({
+          userId: adminObj._id,
+          role: adminObj.role,
+          user: userPayload
+        });
+
+        res.status(200).json({ message: "Login Successful", token: accessToken });
+      } else {
+        throw { status: 401, message: "Invalid Password" };
+      }
+    } else {
+      throw { status: 401, message: "Admin Not Found" };
+    }
+  } catch (err) {
+    next(err);
+  }
+};
+
 
 export const AWSNotification = async (req, res, next) => {
     try {
@@ -3773,6 +3822,15 @@ export const getContractorUsingPhone = async (req, res) => {
 };
 
 export const logout = async (req, res) => {};
+
+export const customDelete = async (req, res) => {
+    try {
+        
+    } catch (error) {
+        console.error('Error during deletion:', error);
+        res.status(500).json({ message: 'Internal server error' });
+    }
+}
 
 // async (req, res) => {
 //     try {

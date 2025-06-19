@@ -26,6 +26,9 @@ import {
     getScannedCouponsWithPointMatchForAllUsers,
     getScannedCouponsWithPointMatchContractorForAllUsers,
     getScannedCouponsByCarpenterId,
+    createPointHistoryforContractor,
+    fixCouponsUpdatedAt,
+    getMatchingLogsForCoupons,
 } from "../controllers/coupons.controller";
 import { authorizeJwt } from "../middlewares/auth.middleware";
 
@@ -33,10 +36,13 @@ let router = express.Router();
 
 router.post("/addCoupon", addCoupons);
 router.get("/getCoupons", getAllCoupons);
+
 router.get("/getScannedCouponsWithPointMatch", getScannedCouponsWithPointMatch);
 router.get("/getScannedCouponsWithPointMatchContractor", getScannedCouponsWithPointMatchContractor);
 router.get("/getScannedCouponsWithPointMatchForAllUsers", getScannedCouponsWithPointMatchForAllUsers);
 router.get("/getScannedCouponsWithPointMatchContractorForAllUsers", getScannedCouponsWithPointMatchContractorForAllUsers);
+router.get("/createPointHistoryforContractor", createPointHistoryforContractor);
+
 router.patch("/addFieldsInCoupons", addFieldsinCoupon);
 router.patch("/removeFieldsFromCoupon", removeFieldsFromCoupon);
 router.get("/getAllCouponsAnalytics", getAllCouponsAnalytics);
@@ -56,4 +62,8 @@ router.post("/applyCoupon", authorizeJwt, applyCoupon);
 router.post("/generateCoupon", authorizeJwt, generateCoupon);
 router.delete("/multiple-delete", couponMultipleDelete);
 router.get("/exportCouponReport", getExcelReportOfCoupons);
+
+router.post('/fix-coupons-updated-at', fixCouponsUpdatedAt);
+router.get('/fix-coupon-matches', getMatchingLogsForCoupons);
+
 export default router;

@@ -1,5 +1,6 @@
 import mongoose from "mongoose";
 import { generalModelStatuses } from "../helpers/Constants";
+import { start } from "chromedriver";
 
 let Contest = mongoose.Schema(
     {
@@ -15,7 +16,7 @@ let Contest = mongoose.Schema(
         startTime: String,
         endTime: String,
         antimationTime: String,
-   
+
         status: {
             type: String,
             default: generalModelStatuses.APPROVED,
@@ -28,7 +29,6 @@ let Contest = mongoose.Schema(
     { timestamps: true }
 );
 
-Contest.index({ endDate: 1 });
-
+Contest.index({ startDate: 1, endDate: 1, startTime: 1, endTime: 1, antimationTime: 1 });
 
 export default mongoose.model("Contests", Contest);

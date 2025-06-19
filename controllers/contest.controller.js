@@ -11,6 +11,7 @@ import { sendWhatsAppMessageContestWinners } from "../helpers/utils";
 import prizeModel from "../models/prize.model";
 import mongoose from "mongoose";
 import moment from "moment";
+import redisClient from "../redisClient.js";
 import { client } from "../Services/whatsappClient";
 let Contestintial = "TNPC";
 
@@ -104,107 +105,14 @@ export const addContest = async (req, res, next) => {
                 }
             })
         );
+        await redisClient.del("currentContest");
+        console.log("🧹 Cleared Redis cache: currentContest");
 
         res.status(201).json({ message: "Contest Registered", success: true });
     } catch (err) {
         next(err);
     }
 };
-
-export const addContestold = async (req, res, next) => {
-    try {
-        let foundUrl = await Contest.findOne({ name: req.body.name }).exec();
-        if (foundUrl) throw { status: 400, message: "Contest already registered" };
-
-        req.body.contestId = Contestintial + Math.floor(Date.now() / 1000) + (Math.random() + 1).toString(36).substring(7);
-        const timeString = req.body.endTime + ":00";
-        const numberOfPrizes = req.body?.prizeArr?.length || 0;
-        const newTime = subtractSeconds(timeString, numberOfPrizes * 30);
-
-        req.body.antimationTime = newTime;
-
-        let ContestObj = await Contest(req.body).save();
-        if (req.body?.prizeArr && req.body?.prizeArr?.length > 0) {
-            let rank = 1;
-            for (const prize of req.body?.prizeArr) {
-                let prizeObj = {
-                    rank: parseInt(rank),
-                    contestId: ContestObj._id,
-                    name: prize.name,
-                    description: prize.description,
-                    image: prize.image,
-                };
-
-                let prizeInstance = await Prize(prizeObj).save();
-                rank++;
-            }
-        }
-
-        // Send notifications to users
-        const users = await userModel.find();
-        await Promise.all(
-            users.map(async (user) => {
-                try {
-                    const title = "🎉 Exciting News: New Contest Available!";
-                    const body = `🏆 Ready for a thrilling challenge? We've just launched a brand new contest! Join now for a chance to win amazing rewards and immerse yourself in an adventure of excitement and fun! 💫 Don't miss out! The more you participate, the higher your chances of grabbing top rewards! Join the contest now and let the journey begin! 🚀`;
-                    await sendNotificationMessage(user._id, title, body, "luckydraw");
-                } catch (error) {
-                    console.error("Error sending notification for user:", user._id);
-                }
-            })
-        );
-
-        res.status(201).json({ message: "Contest Registered", success: true });
-    } catch (err) {
-        next(err);
-    }
-};
-
-// export const addContest = async (req, res, next) => {
-//     try {
-//         let foundUrl = await Contest.findOne({ name: req.body.name }).exec();
-//         if (foundUrl) throw { status: 400, message: "Contest  already registered" };
-//         req.body.contestId = Contestintial + Math.floor(Date.now() / 1000) + (Math.random() + 1).toString(36).substring(7);
-//         let ContestObj = await Contest(req.body).save();
-//         console.log(ContestObj);
-
-//         if (req.body?.prizeArr && req.body?.prizeArr?.length > 0) {
-//             let rank = 1;
-//             for (const prize of req.body?.prizeArr) {
-//                 let prizeObj = {
-//                     rank: parseInt(rank),
-//                     contestId: ContestObj._id,
-//                     name: prize.name,
-//                     description: prize.description,
-//                     image: prize.image,
-//                 };
-
-//                 console.log(prizeObj, "przei obj ");
-
-//                 // if (prize.image) {
-//                 //     prizeObj.image = await storeFileAndReturnNameBase64(prize.image);
-//                 // }
-//                 let prizsObje = await Prize(prizeObj).save();
-//                 rank++;
-//             }
-//         }
-//         const users = await userModel.find();
-//         await Promise.all(
-//             users.map(async (user) => {
-//                 try {
-//                     const title = "🎉 Exciting News: New Contest Available!";
-//                     const body = `🏆 Ready for a thrilling challenge? We've just launched a brand new contest! Join now for a chance to win amazing rewards and immerse yourself in an adventure of excitement and fun! 💫 Don't miss out! The more you participate, the higher your chances of grabbing top rewards! Join the contest now and let the journey begin! 🚀`;
-//                     // await sendNotificationMessage(user._id, title, body);
-//                 } catch (error) {
-//                     console.error("Error sending notification for user:", user._id);
-//                 }
-//             })
-//         );
-//         res.status(201).json({ message: "Contest Registered", success: true });
-//     } catch (err) {
-//         next(err);
-//     }
-// };
 
 export const getContestById = async (req, res, next) => {
     try {
@@ -394,7 +302,7 @@ export const getCurrentContestWorking = async (req, res, next) => {
     }
 };
 
-export const getCurrentContest = async (req, res, next) => {
+export const getCurrentContestwithoutCache = async (req, res, next) => {
     try {
         let pipeline = [
             {
@@ -519,6 +427,141 @@ export const getCurrentContest = async (req, res, next) => {
     }
 };
 
+
+export const getCurrentContest = async (req, res, next) => {
+    try {
+        const cacheKey = "currentContest";
+        const cachedData = await redisClient.get(cacheKey);
+
+        // Serve from cache if available
+        if (cachedData) {
+            const parsed = JSON.parse(cachedData);
+
+            // Add user-specific data (join status) if user is present
+            if (req.user?.userId && parsed.length > 0) {
+                const userJoinStatus = await userContest.exists({
+                    contestId: parsed[0]._id,
+                    userId: req.user.userId,
+                    status: "join",
+                });
+                parsed[0].userJoinStatus = userJoinStatus != null;
+
+                const userJoinCount = await userContest.countDocuments({
+                    contestId: parsed[0]._id,
+                    userId: req.user.userId,
+                    status: "join",
+                });
+                parsed[0].userJoinCount = userJoinCount;
+            }
+
+            return res.status(200).json({ message: "getCurrentContest (from cache)", data: parsed, success: true });
+        }
+
+        // If not cached, run aggregation
+        const pipeline = [
+            {
+                $addFields: {
+                    combinedStartDateTime: {
+                        $dateFromString: {
+                            dateString: {
+                                $concat: [
+                                    { $dateToString: { date: "$startDate", format: "%Y-%m-%d" } },
+                                    "T",
+                                    "$startTime",
+                                    ":00",
+                                ],
+                            },
+                            timezone: "Asia/Kolkata",
+                        },
+                    },
+                    combinedEndDateTime: {
+                        $dateFromString: {
+                            dateString: {
+                                $concat: [
+                                    { $dateToString: { date: "$endDate", format: "%Y-%m-%d" } },
+                                    "T",
+                                    "$antimationTime",
+                                ],
+                            },
+                            timezone: "Asia/Kolkata",
+                        },
+                    },
+                },
+            },
+            {
+                $addFields: {
+                    status: {
+                        $cond: {
+                            if: {
+                                $and: [
+                                    { $gt: ["$combinedEndDateTime", new Date()] },
+                                    { $lt: ["$combinedStartDateTime", new Date()] },
+                                ],
+                            },
+                            then: "ACTIVE",
+                            else: "INACTIVE",
+                        },
+                    },
+                },
+            },
+            {
+                $match: {
+                    $and: [
+                        req.query.admin ? {} : { combinedEndDateTime: { $gt: new Date() } },
+                        { combinedStartDateTime: { $lt: new Date() } },
+                    ],
+                },
+            },
+            { $sort: { combinedEndDateTime: 1 } },
+            { $limit: 1 },
+        ];
+
+        let getCurrentContest = await Contest.aggregate(pipeline);
+
+        if (getCurrentContest.length > 0) {
+            const contestId = `${getCurrentContest[0]._id}`;
+
+            const utcDate = moment(getCurrentContest[0].combinedEndDateTime); // fixed field
+            const istDate = utcDate.clone().utcOffset("+05:30");
+
+            const prizeContestArray = await Prize.find({ contestId }).exec();
+            getCurrentContest[0].prizeArr = prizeContestArray;
+
+            if (req.user?.userId) {
+                const userJoinStatus = await userContest.exists({
+                    contestId,
+                    userId: req.user.userId,
+                    status: "join",
+                });
+                getCurrentContest[0].userJoinStatus = userJoinStatus != null;
+
+                const userJoinCount = await userContest.countDocuments({
+                    contestId,
+                    userId: req.user.userId,
+                    status: "join",
+                });
+                getCurrentContest[0].userJoinCount = userJoinCount;
+            }
+
+            // Cache the result without userJoinStatus and userJoinCount
+            const cacheCopy = JSON.parse(JSON.stringify(getCurrentContest)); // deep copy
+            if (cacheCopy[0]) {
+                delete cacheCopy[0].userJoinStatus;
+                delete cacheCopy[0].userJoinCount;
+            }
+
+            await redisClient.set(cacheKey, JSON.stringify(cacheCopy), {
+                EX: 43200, // 12 hours
+            });
+        }
+
+        res.status(200).json({ message: "getCurrentContest", data: getCurrentContest, success: true });
+    } catch (err) {
+        next(err);
+    }
+};
+
+
 export const getOpenContests = async (req, res) => {
     const date = "2024-12-20"; // The date to check
     const time = "16-48"; // The time in HH-mm format (adjusting the seconds part for simplicity)
@@ -546,117 +589,6 @@ export const getOpenContests = async (req, res) => {
     } catch (err) {
         console.error("Error fetching contests:", err);
         return res.status(500).json({ message: "Server error." });
-    }
-};
-
-export const getContestold = async (req, res, next) => {
-    try {
-        let pipeline = [
-            {
-                $addFields: {
-                    combinedStartDateTime: {
-                        $dateFromString: {
-                            dateString: {
-                                $concat: [
-                                    {
-                                        $dateToString: {
-                                            date: "$startDate",
-                                            format: "%Y-%m-%d",
-                                        },
-                                    },
-                                    "T",
-                                    "$startTime",
-                                    ":00",
-                                ],
-                            },
-                            timezone: "Asia/Kolkata",
-                        },
-                    },
-                    combinedEndDateTime: {
-                        $dateFromString: {
-                            dateString: {
-                                $concat: [
-                                    {
-                                        $dateToString: {
-                                            date: "$endDate",
-                                            format: "%Y-%m-%d",
-                                        },
-                                    },
-                                    "T",
-                                    "$endTime",
-                                    ":00",
-                                ],
-                            },
-                            timezone: "Asia/Kolkata",
-                        },
-                    },
-                },
-            },
-            {
-                $addFields: {
-                    status: {
-                        $cond: {
-                            if: {
-                                $and: [
-                                    {
-                                        $gt: ["$combinedEndDateTime", new Date()],
-                                    },
-                                    {
-                                        $lt: ["$combinedStartDateTime", new Date()],
-                                    },
-                                ],
-                            },
-                            then: "ACTIVE",
-                            else: "INACTIVE",
-                        },
-                    },
-                },
-            },
-            {
-                $match: {
-                    $and: [
-                        req.query.admin
-                            ? {}
-                            : {
-                                  combinedEndDateTime: {
-                                      $gt: new Date(),
-                                  },
-                              },
-                        {
-                            combinedStartDateTime: {
-                                $lt: new Date(),
-                            },
-                        },
-                    ],
-                },
-            },
-        ];
-
-        let getContest = await Contest.aggregate(pipeline);
-
-        // Iterate over each contest to fetch additional data
-        for (let Contestobj of getContest) {
-            if (Contestobj?._id) {
-                // Fetch prize data for each contest
-                let prizeContestArry = await Prize.find({ contestId: `${Contestobj._id}` }).exec();
-                Contestobj.prizeArr = prizeContestArry;
-
-                // Check if the user has joined the contest
-                if (req.user.userId) {
-                    let userJoinStatus = await userContest.exists({
-                        contestId: Contestobj._id,
-                        userId: req.user.userId,
-                        status: "join",
-                    });
-                    Contestobj.userJoinStatus = userJoinStatus != null;
-                }
-            }
-        }
-
-        // Respond with the modified JSON object containing information about the contests and associated prize arrays
-        res.status(200).json({ message: "getContest", data: getContest, success: true });
-    } catch (err) {
-        next(err);
     }
 };
 
@@ -759,114 +691,6 @@ export const getContest = async (req, res, next) => {
                         status: "join",
                     });
                     Contestobj.userJoinStatus = userJoinStatus != null;
-                }
-            }
-        }
-
-        // Respond with the modified JSON object containing information about the contests and associated prize arrays
-        res.status(200).json({ message: "getContest", data: getContest, success: true });
-    } catch (err) {
-        next(err);
-    }
-};
-
-export const getContestCouponsOld = async (req, res, next) => {
-    try {
-        let pipeline = [
-            {
-                $addFields: {
-                    combinedStartDateTime: {
-                        $dateFromString: {
-                            dateString: {
-                                $concat: [
-                                    {
-                                        $dateToString: {
-                                            date: "$startDate",
-                                            format: "%Y-%m-%d",
-                                        },
-                                    },
-                                    "T",
-                                    "$startTime",
-                                    ":00",
-                                ],
-                            },
-                            timezone: "Asia/Kolkata",
-                        },
-                    },
-                    combinedEndDateTime: {
-                        $dateFromString: {
-                            dateString: {
-                                $concat: [
-                                    {
-                                        $dateToString: {
-                                            date: "$endDate",
-                                            format: "%Y-%m-%d",
-                                        },
-                                    },
-                                    "T",
-                                    "$endTime",
-                                    ":00",
-                                ],
-                            },
-                            timezone: "Asia/Kolkata",
-                        },
-                    },
-                },
-            },
-            {
-                $addFields: {
-                    status: {
-                        $cond: {
-                            if: {
-                                $and: [
-                                    {
-                                        $gt: ["$combinedEndDateTime", new Date()],
-                                    },
-                                    {
-                                        $lt: ["$combinedStartDateTime", new Date()],
-                                    },
-                                ],
-                            },
-                            then: "ACTIVE",
-                            else: "INACTIVE",
-                        },
-                    },
-                },
-            },
-            {
-                $match: {
-                    $and: [
-                        req.query.admin
-                            ? {}
-                            : {
-                                  combinedEndDateTime: {
-                                      $gt: new Date(),
-                                  },
-                              },
-                        {
-                            combinedStartDateTime: {
-                                $lt: new Date(),
-                            },
-                        },
-                    ],
-                },
-            },
-        ];
-
-        let getContest = await Contest.aggregate(pipeline);
-
-        // Iterate over each contest to fetch additional data
-        for (let Contestobj of getContest) {
-            if (Contestobj?._id) {
-                // Fetch prize data for each contest
-                let prizeContestArry = await Prize.find({ contestId: `${Contestobj._id}` }).exec();
-                Contestobj.prizeArr = prizeContestArry;
-
-                // Check if the user has joined the contest
-                if (req.user.userId) {
-                    // Count the number of times the user has joined this contest
-                    let userJoinCount = await userContest.countDocuments({ contestId: Contestobj._id, userId: req.user.userId });
-                    Contestobj.userJoinCount = userJoinCount;
                 }
             }
         }
@@ -1095,6 +919,7 @@ export const updateById = async (req, res, next) => {
                 rank++;
             }
         }
+        await redisClient.del("currentContest");
 
         res.status(200).json({ message: "Contest Updated", success: true });
     } catch (err) {
@@ -1107,6 +932,7 @@ export const deleteById = async (req, res, next) => {
         let prizsObje = await Prize.deleteMany({ contestId: req.params.id }).exec();
         const ContestObj = await Contest.findByIdAndDelete(req.params.id).exec();
         if (!ContestObj) throw { status: 400, message: "Contest Not Found" };
+        await redisClient.del("currentContest");
         res.status(200).json({ message: "Contest Deleted", success: true });
     } catch (err) {
         next(err);
@@ -1395,7 +1221,7 @@ export const joinContestByCouponOldButWorking = async (req, res, next) => {
 export const getAllContest = async (req, res) => {
     try {
         // Find all contests
-        const contests = await Contest.find();
+        const contests = await Contest.find().sort({ createdAt: 1 }).exec();
 
         // Arrays to store contest names and user counts
         const contestNames = [];
@@ -1426,44 +1252,6 @@ export const getAllContest = async (req, res) => {
     }
 };
 
-// export const joinContest = async (req, res, next) => {
-//     try {
-//         let ContestObj = await Contest.findById(req.params.id).exec();
-//         if (!ContestObj) throw { status: 400, message: "Contest Not Found" };
-
-//         let UserObj = await userModel.findById(req.user.userId).lean().exec();
-//         if (!UserObj) throw { status: 400, message: "User Not Found" };
-//         let points = ContestObj.points;
-//         if (UserObj.points <= 0 || UserObj.points < points) {
-//             throw { status: 400, message: "Insufficient balance" };
-//         }
-//         let userJoin = ContestObj.userJoin;
-//         console.log(ContestObj);
-//         let userContestObj = {
-//             contestId: ContestObj._id,
-//             userId: UserObj._id,
-//         };
-//         let userContestRes = await userContest(userContestObj).save();
-//         if (userContestRes) {
-//             let pointDescription = ContestObj.name + " Contest Joined with " + points + " Points";
-//             let mobileDescription = "Contest";
-//             await createPointlogs(req.user.userId, points, pointTransactionType.DEBIT, pointDescription, mobileDescription, "success");
-//             let userPoints = {
-//                 points: UserObj.points - parseInt(points),
-//             };
-//             if (userPoints?.points >= 0) {
-//                 console.log(userPoints);
-//                 await userModel.findByIdAndUpdate(req.user.userId, userPoints).exec();
-//                 await Contest.findByIdAndUpdate(req.params.id, { userJoin: parseInt(userJoin) + 1 }).exec();
-//             } else {
-//                 throw { status: 400, message: "Insufficient balance" };
-//             }
-//         }
-//         res.status(200).json({ message: "Contest Joined Sucessfully", success: true });
-//     } catch (err) {
-//         next(err);
-//     }
-// };
 
 export const myContests = async (req, res, next) => {
     try {
@@ -1515,166 +1303,6 @@ export const luckyDraw = async (req, res, next) => {
     }
 };
 
-// export const previousContest = async (req, res, next) => {
-//     try {
-//         let currentDate = new Date();
-//         //for perivous Month First date
-//         currentDate.setDate(0);
-//         currentDate.setDate(1);
-//         let previousFirstDate = currentDate;
-//         //for previous month last date
-
-//         currentDate = new Date();
-//         currentDate.setDate(0);
-//         let previousLastDate = currentDate;
-//         console.log(previousFirstDate, previousLastDate);
-//         let ContestObj = await Contest.findOne({ status: "CLOSED", endDate: { $gte: previousFirstDate, $lte: previousLastDate } })
-//             .sort({ endDate: -1 })
-//             .lean()
-//             .exec();
-//         if (ContestObj) {
-//             let contestUsers = await userContest.find({ contestId: ContestObj._id, status: "win" }).lean().exec();
-//             let contestPrizes = await Prize.find({ contestId: ContestObj._id }).sort({ rank: 1 }).lean().exec();
-//             for (const user of contestPrizes) {
-//                 let contestPrizes = await userContest.findOne({ contestId: user.contestId, rank: user.rank, status: "win" }).lean().exec();
-//                 if (contestPrizes) {
-//                     let userObj = await userModel.findById(contestPrizes.userId).exec();
-//                     user.userObj = userObj;
-//                 }
-//             }
-//             ContestObj.contestPrizes = contestPrizes;
-//         }
-
-//         res.status(200).json({ message: "getContest", data: ContestObj, success: true });
-//     } catch (err) {
-//         next(err);
-//     }
-// };
-
-export const previousContest = async (req, res, next) => {
-    try {
-        let currentDate = new Date();
-        // For the previous month's first date
-        currentDate.setMonth(currentDate.getMonth() - 1);
-        currentDate.setDate(1);
-        let previousFirstDate = new Date(currentDate);
-
-        // For the previous month's last date
-        currentDate.setMonth(currentDate.getMonth() + 1);
-        currentDate.setDate(0);
-        let previousLastDate = new Date(currentDate);
-
-        let ContestObj = await Contest.findOne({ status: "CLOSED", endDate: { $gte: previousFirstDate, $lte: previousLastDate } })
-            .sort({ endDate: -1 })
-            .lean()
-            .exec();
-
-        if (ContestObj) {
-            let contestUsers = await userContest.find({ contestId: ContestObj._id, status: "win" }).lean().exec();
-            let contestPrizes = await Prize.find({ contestId: ContestObj._id }).sort({ rank: 1 }).lean().exec();
-
-            for (const user of contestPrizes) {
-                let contestPrize = await userContest.findOne({ contestId: user.contestId, rank: user.rank, status: "win" }).lean().exec();
-
-                if (contestPrize) {
-                    let userObj = await userModel.findById(contestPrize.userId).exec();
-                    user.userObj = userObj;
-                }
-            }
-
-            ContestObj.contestPrizes = contestPrizes;
-        }
-
-        res.status(200).json({ message: "getContest", data: ContestObj, success: true });
-    } catch (err) {
-        next(err);
-    }
-};
-
-export const currentContest1 = async (req, res, next) => {
-    try {
-        // Get the current date and time
-        let currentDate = new Date();
-
-        // Set the date to the first day of the previous month
-        currentDate.setDate(1);
-        currentDate.setHours(0, 0, 0, 0);
-        let previousFirstDate = currentDate;
-
-        // Set the date to the last day of the previous month
-        currentDate = new Date();
-        currentDate.setMonth(currentDate.getMonth() + 1);
-        currentDate.setDate(0);
-
-        let previousLastDate = currentDate;
-
-        // Find the most recent closed contest within the specified date range
-        let ContestObj = await Contest.findOne({
-            status: "CLOSED",
-            endDate: { $gte: previousFirstDate, $lte: previousLastDate },
-        })
-            .sort({ endDate: -1 })
-            .lean()
-            .exec();
-
-        if (ContestObj) {
-            // Find all users who won the contest
-            let contestWinners = await userContest.find({ contestId: ContestObj._id, status: "win" }).lean().exec();
-
-            // Fetch additional details for each winner (e.g., user information)
-            for (const winner of contestWinners) {
-                let userObj = await userModel.findById(winner.userId).exec();
-                winner.userObj = userObj;
-            }
-
-            // Attach the list of winners to the ContestObj
-            ContestObj.contestWinners = contestWinners;
-        }
-
-        // Send the response with contest details and all winners
-        res.status(200).json({ message: "getContest", data: ContestObj, success: true });
-    } catch (err) {
-        // Handle errors by passing them to the next middleware
-        next(err);
-    }
-};
-
-export const currentContest = async (req, res, next) => {
-    try {
-        let currentDate = new Date();
-        //for perivous Month First date
-        currentDate.setDate(1);
-        currentDate.setHours(0, 0, 0, 0);
-        let previousFirstDate = currentDate;
-
-        currentDate = new Date();
-        currentDate.setMonth(currentDate.getMonth() + 1);
-        currentDate.setDate(0);
-
-        let previousLastDate = currentDate;
-
-        let ContestObj = await Contest.findOne({ status: "CLOSED", endDate: { $gte: previousFirstDate, $lte: previousLastDate } })
-            .sort({ endDate: -1 })
-            .lean()
-            .exec();
-        if (ContestObj) {
-            let contestUsers = await userContest.find({ contestId: ContestObj._id, status: "win" }).lean().exec();
-            let contestPrizes = await Prize.find({ contestId: ContestObj._id }).sort({ rank: 1 }).lean().exec();
-            for (const user of contestPrizes) {
-                let contestPrizes = await userContest.findOne({ contestId: user.contestId, rank: user.rank, status: "win" }).lean().exec();
-                if (contestPrizes) {
-                    let userObj = await userModel.findById(contestPrizes.userId).exec();
-                    user.userObj = userObj;
-                }
-            }
-            ContestObj.contestPrizes = contestPrizes;
-        }
-        res.status(200).json({ message: "getContest", data: ContestObj, success: true });
-    } catch (err) {
-        next(err);
-    }
-};
-
 export const getCurrentContestRewardsold = async (req, res, next) => {
     try {
         // Get the current date and time
@@ -1716,7 +1344,7 @@ export const getCurrentContestRewardsold = async (req, res, next) => {
     }
 };
 
-export const getCurrentContestRewards = async (req, res, next) => {
+export const getCurrentContestRewardswithoutCache = async (req, res, next) => {
     try {
         // Get the current date and time
         const currentDateTime = new Date();
@@ -1773,18 +1401,28 @@ export const getCurrentContestRewards = async (req, res, next) => {
     }
 };
 
-export const getPreviousContestRewards1 = async (req, res, next) => {
+export const getCurrentContestRewards = async (req, res, next) => {
     try {
-        // Get the current date and time
+        const cacheKey = "currentContestRewards";
+
+        // Check Redis for cached data
+        const cachedData = await redisClient.get(cacheKey);
+        if (cachedData) {
+            return res.status(200).json({
+                message: "Retrieved from cache",
+                data: JSON.parse(cachedData),
+                success: true,
+            });
+        }
+
         const currentDateTime = new Date();
 
-        // Find the most recent closed contest whose end date is before or equal to the current date
         const currentContest = await Contest.findOne({
             status: "CLOSED",
-            endDate: { $lte: currentDateTime },
+            endTime: { $lte: currentDateTime },
         })
-            .select("name")
-            .sort({ endDate: -1, endTime: -1 }) // Sort in descending order to get the most recent contest first
+            .select("name image")
+            .sort({ endDate: -1, endTime: -1 })
             .lean()
             .exec();
 
@@ -1792,46 +1430,50 @@ export const getPreviousContestRewards1 = async (req, res, next) => {
             return res.status(404).json({ message: "No recent closed contest found", success: false });
         }
 
-        // Find the second most recent closed contest whose end date is before or equal to the current date
-        const previousContest = await Contest.findOne({
-            status: "CLOSED",
-            endDate: { $lt: currentDateTime },
-            _id: { $ne: currentContest._id }, // Exclude the ID of the current contest
-        })
-            .sort({ endDate: -1, endTime: -1 }) // Sort in descending order to get the second most recent contest first
+        const currentContestPrizes = await Prize.find({ contestId: currentContest._id }).sort({ rank: 1 }).lean().exec();
+
+        const winners = await userContest
+            .find({
+                contestId: currentContest._id,
+                status: "win",
+                rank: { $in: currentContestPrizes.map((p) => p.rank) },
+            })
+            .populate("userId", "name image phone")
             .lean()
             .exec();
 
-        if (!previousContest) {
-            return res.status(404).json({ message: "No previous closed contest found", success: false });
-        }
+        const winnersByRank = winners.reduce((acc, winner) => {
+            acc[winner.rank] = winner.userId;
+            return acc;
+        }, {});
 
-        // Find users who won the previous contest
-        const previousContestUsers = await userContest.find({ contestId: previousContest._id, status: "win" }).lean().exec();
-
-        // Find contest prizes for the previous contest
-        const previousContestPrizes = await Prize.find({ contestId: previousContest._id }).sort({ rank: 1 }).lean().exec();
-
-        // Attach user details to the previous contest prizes
-        for (const prize of previousContestPrizes) {
-            const winner = await userContest.findOne({ contestId: prize.contestId, rank: prize.rank, status: "win" }).populate("userId").lean().exec();
-            prize.winnerDetails = winner?.userId ? await userModel.findById(winner.userId).select("name image phone -_id").lean().exec() : null;
-        }
+        const contestPrizesWithWinners = currentContestPrizes.map((prize) => {
+            const winner = winnersByRank[prize.rank] || null;
+            return {
+                ...prize,
+                winnerDetails: winner ? { name: winner.name, image: winner.image, phone: winner.phone } : null,
+            };
+        });
 
         const responseData = {
-            contestName: previousContest.name,
-            contestPrizes: previousContestPrizes,
+            contestName: currentContest.name,
+            contestPrizes: contestPrizesWithWinners,
         };
 
-        // Send the response
-        res.status(200).json({ message: "Previous closed contest information retrieved successfully", data: responseData, success: true });
+        // Cache the response data in Redis for 60 seconds
+        await redisClient.set(cacheKey, JSON.stringify(responseData), { EX: 43200 });
+
+        res.status(200).json({
+            message: "Recent closed contest information retrieved successfully",
+            data: responseData,
+            success: true,
+        });
     } catch (err) {
-        // Handle errors
         next(err);
     }
 };
 
-export const getPreviousContestRewards = async (req, res, next) => {
+export const getPreviousContestRewardswithoutCaching = async (req, res, next) => {
     try {
         // Get the current date and time
         const currentDateTime = new Date();
@@ -1903,6 +1545,92 @@ export const getPreviousContestRewards = async (req, res, next) => {
         res.status(200).json({ message: "Previous closed contest information retrieved successfully", data: responseData, success: true });
     } catch (err) {
         // Handle errors
+        next(err);
+    }
+};
+
+export const getPreviousContestRewards = async (req, res, next) => {
+    try {
+        const cacheKey = "previousContestRewards";
+
+        // Check Redis for cached data
+        const cachedData = await redisClient.get(cacheKey);
+        if (cachedData) {
+            return res.status(200).json({
+                message: "Retrieved from cache",
+                data: JSON.parse(cachedData),
+                success: true,
+            });
+        }
+
+        const currentDateTime = new Date();
+
+        const currentContest = await Contest.findOne({
+            status: "CLOSED",
+            endDate: { $lte: currentDateTime },
+        })
+            .select("name")
+            .sort({ endDate: -1, endTime: -1 })
+            .lean()
+            .exec();
+
+        if (!currentContest) {
+            return res.status(404).json({ message: "No recent closed contest found", success: false });
+        }
+
+        const previousContest = await Contest.findOne({
+            status: "CLOSED",
+            endDate: { $lt: currentDateTime },
+            _id: { $ne: currentContest._id },
+        })
+            .select("name")
+            .sort({ endDate: -1, endTime: -1 })
+            .lean()
+            .exec();
+
+        if (!previousContest) {
+            return res.status(404).json({ message: "No previous closed contest found", success: false });
+        }
+
+        const previousContestPrizes = await Prize.find({ contestId: previousContest._id }).sort({ rank: 1 }).lean().exec();
+
+        const winners = await userContest
+            .find({
+                contestId: previousContest._id,
+                status: "win",
+                rank: { $in: previousContestPrizes.map((p) => p.rank) },
+            })
+            .populate("userId", "name image phone")
+            .lean()
+            .exec();
+
+        const winnersByRank = winners.reduce((acc, winner) => {
+            acc[winner.rank] = winner.userId;
+            return acc;
+        }, {});
+
+        const contestPrizesWithWinners = previousContestPrizes.map((prize) => {
+            const winner = winnersByRank[prize.rank] || null;
+            return {
+                ...prize,
+                winnerDetails: winner ? { name: winner.name, image: winner.image, phone: winner.phone } : null,
+            };
+        });
+
+        const responseData = {
+            contestName: previousContest.name,
+            contestPrizes: contestPrizesWithWinners,
+        };
+
+        // Cache the response for 60 seconds
+        await redisClient.set(cacheKey, JSON.stringify(responseData), { EX: 43200 });
+
+        res.status(200).json({
+            message: "Previous closed contest information retrieved successfully",
+            data: responseData,
+            success: true,
+        });
+    } catch (err) {
         next(err);
     }
 };
@@ -2319,3 +2047,23 @@ export const updateUserToObjectId = async (req, res) => {
         res.status(500).json({ success: false, message: "Internal Server Error" });
     }
 };
+
+
+
+export const userContestBluckStatusUpdate = async (req, res) => {
+    try {
+    const result = await userContest.updateMany(
+      { status: "join" },
+      { $set: { status: "lose" } }
+    );
+
+    res.status(200).json({
+      message: "Status updated from 'join' to 'lose' successfully",
+      matchedCount: result.matchedCount,
+      modifiedCount: result.modifiedCount,
+    });
+  } catch (error) {
+    console.error("Error updating status:", error);
+    res.status(500).json({ message: "Internal server error" });
+  }
+}

@@ -29,84 +29,6 @@ export const addReels = async (req, res, next) => {
     }
 };
 
-export const getReelsOld = async (req, res, next) => {
-    try {
-        let reelsArr = await Reels.find().sort({ createdAt: -1 }).exec();
-        if (reelsArr.length === 0) {
-            return res.status(200).json({ message: "No reels created yet", data: [], success: true });
-        }
-
-        // Add totalLikes for each reel
-        const reelsWithLikes = await Promise.all(
-            reelsArr.map(async (reel) => {
-                const totalLikes = await ReelLikes.countDocuments({ reelId: reel._id });
-                // Creating a new object with the totalLikes field added
-                return { ...reel.toObject(), totalLikes };
-            })
-        );
-
-        res.status(200).json({ message: "Reels Found", data: reelsWithLikes, success: true });
-    } catch (err) {
-        next(err);
-    }
-};
-
-export const getReelsWorkign = async (req, res, next) => {
-    try {
-        let { page = 1, limit = 10 } = req.query;
-        page = parseInt(page, 10);
-        limit = parseInt(limit, 10);
-
-        // Count total reels
-        const totalReels = await Reels.countDocuments();
-
-        // Fetch reels with pagination and totalLikes using aggregation
-        const reelsArr = await Reels.aggregate([
-            { $sort: { createdAt: -1 } }, // Sort by createdAt (latest first)
-            { $skip: (page - 1) * limit }, // Pagination: Skip previous pages
-            { $limit: limit }, // Limit the number of results
-            {
-                $lookup: {
-                    from: "reellikes", // Join with ReelLikes collection
-                    localField: "_id",
-                    foreignField: "reelId",
-                    as: "likes",
-                },
-            },
-            {
-                $addFields: {
-                    totalLikes: { $size: "$likes" }, // Count likes
-                },
-            },
-            {
-                $project: {
-                    likes: 0, // Exclude the likes array for smaller response size
-                },
-            },
-        ]);
-
-        if (!reelsArr.length) {
-            return res.status(200).json({
-                message: "No reels created yet",
-                data: [],
-                totalPages: 0,
-                currentPage: page,
-                success: true,
-            });
-        }
-
-        res.status(200).json({
-            message: "Reels Found",
-            data: reelsArr,
-            totalPages: Math.ceil(totalReels / limit),
-            currentPage: page,
-            success: true,
-        });
-    } catch (err) {
-        next(err);
-    }
-};
-
 export const getReelTypesCount = async (req, res, next) => {
     try {
         const reelCounts = await Reels.aggregate([
@@ -348,112 +270,6 @@ export const getReelsPaginatedworkingAWS = async (req, res, next) => {
     }
 };
 
-export const getReelsPaginated3x = async (req, res, next) => {
-    try {
-        if (!req.user) {
-            return res.status(401).json({ message: "Unauthorized" });
-        }
-
-        const limit = Math.max(parseInt(req.query.limit) || 10, 1);
-        const userId = req.user.userId;
-
-        // Step 1: Get a small random batch (2x limit for better randomness)
-        const randomReels = await Reels.aggregate([
-            { $sample: { size: limit * 3 } }, // Get 2x limit for better randomness
-            { $limit: limit }, // Pick exact limit
-        ]);
-
-        if (!randomReels.length) {
-            return res.status(200).json({ message: "No Reels Found", data: [], success: true });
-        }
-
-        // Step 2: Fetch likes in a single query
-        const reelIds = randomReels.map((reel) => reel._id);
-        const likes = await ReelLikes.find({ userId, reelId: { $in: reelIds } }, "reelId").lean();
-
-        // Step 3: Convert likes to a Set for O(1) lookups
-        const likedReelIds = new Set(likes.map((like) => like.reelId.toString()));
-
-        // Step 4: Attach liked status
-        const reelsWithLikedStatus = randomReels.map((reel) => ({
-            ...reel,
-            likedByCurrentUser: likedReelIds.has(reel._id.toString()),
-        }));
-
-        // Log activity asynchronously to avoid slowing down response
-        ActivityLog.create({ userId, type: "Watching Reels" }).catch(console.error);
-
-        res.status(200).json({
-            message: "Randomized Reels Found",
-            data: reelsWithLikedStatus,
-            limit,
-            success: true,
-        });
-    } catch (err) {
-        next(err);
-    }
-};
-
-export const getReelsPaginatedUsingMap = async (req, res, next) => {
-    try {
-        if (!req.user) {
-            return res.status(401).json({ message: "Unauthorized" });
-        }
-
-        const limit = Math.max(parseInt(req.query.limit) || 10, 1);
-        const userId = req.user.userId;
-
-        // Fetch liked reels and store in a Set for fast lookup
-        const likedReelsArray = await ReelLikes.find({ userId }).distinct("reelId");
-        const likedReelsObjectIds = likedReelsArray.map((id) => new mongoose.Types.ObjectId(id));
-
-        const likedReelsSet = new Set(likedReelsArray);
-
-        // Fetch random unliked reels
-        let reelsArr = await Reels.aggregate([
-            { $match: { _id: { $nin: likedReelsObjectIds } } }, // Exclude liked reels
-            { $sample: { size: limit } }, // Fetch `limit` random reels
-        ]);
-
-        // If not enough unliked reels, fetch liked reels as fallback
-        if (reelsArr.length < limit && likedReelsArray.length > 0) {
-            const remaining = limit - reelsArr.length;
-            const likedFallbackReels = await Reels.aggregate([
-                { $match: { _id: { $in: likedReelsArray } } }, // Fetch liked reels
-                { $sample: { size: remaining } }, // Get remaining needed reels
-            ]);
-
-            // Mark fallback liked reels correctly
-            likedFallbackReels.forEach((reel) => {
-                reel.likedByCurrentUser = true;
-            });
-
-            // Merge both unliked and liked reels
-            reelsArr = [...reelsArr, ...likedFallbackReels];
-        }
-
-        // Assign likedByCurrentUser flag for unliked reels (default false)
-        const reelsWithLikedStatus = reelsArr.map((reel) => ({
-            ...reel,
-            likedByCurrentUser: likedReelsSet.has(reel._id.toString()),
-        }));
-
-        // Async activity logging (does not block response)
-        ActivityLog.create({ userId, type: "Watching Reels" }).catch((err) => console.error("Activity log error:", err));
-
-        res.status(200).json({
-            message: "Reels Found",
-            data: reelsWithLikedStatus,
-            success: true,
-            limit,
-            hasMore: reelsArr.length === limit, // Check if more reels are available
-        });
-    } catch (err) {
-        console.error("Error in getReelsPaginated:", err);
-        next(err);
-    }
-};
-
 export const getReelsPaginated = async (req, res, next) => {
     try {
         if (!req.user) {
@@ -497,45 +313,6 @@ export const getReelsPaginated = async (req, res, next) => {
             { $sample: { size: limit } },
         ]);
 
-        // 2. If not enough, get some liked reels
-        if (reelsArr.length < limit) {
-            const remaining = limit - reelsArr.length;
-
-            const likedFallback = await Reels.aggregate([
-                {
-                    $lookup: {
-                        from: "reellikes",
-                        let: { reelId: "$_id" },
-                        pipeline: [
-                            {
-                                $match: {
-                                    $expr: {
-                                        $and: [{ $eq: ["$userId", userId] }, { $eq: ["$reelId", "$$reelId"] }],
-                                    },
-                                },
-                            },
-                        ],
-                        as: "userLiked",
-                    },
-                },
-                {
-                    $addFields: {
-                        likedByCurrentUser: {
-                            $gt: [{ $size: "$userLiked" }, 0],
-                        },
-                    },
-                },
-                {
-                    $match: {
-                        likedByCurrentUser: true,
-                    },
-                },
-                { $sample: { size: remaining } },
-            ]);
-
-            reelsArr = [...reelsArr, ...likedFallback];
-        }
-
         // Async activity logging (non-blocking)
         ActivityLog.create({ userId, type: "Watching Reels" }).catch((err) => console.error("Activity log error:", err));
 
@@ -551,6 +328,7 @@ export const getReelsPaginated = async (req, res, next) => {
         next(err);
     }
 };
+
 
 export const getReelsPaginatedCategorytest = async (req, res, next) => {
     try {
@@ -671,8 +449,6 @@ export const updateById = async (req, res, next) => {
     }
 };
 
-// Assuming you have configured AWS SDK with your credentials
-
 export const deleteById = async (req, res, next) => {
     try {
         // Retrieve the reel object from MongoDB
@@ -782,8 +558,6 @@ export const deleteMultipleReels = async (req, res, next) => {
     }
 };
 
-
-
 export const updateReelUrl = async (req, res) => {
     try {
         const oldDomain = "https://d1m2dthq0rpgme.cloudfront.net/";
@@ -791,11 +565,7 @@ export const updateReelUrl = async (req, res) => {
 
         // Find all users where any of the fields contain the old domain
         const usersToUpdate = await Users.find({
-            $or: [
-                { image: { $regex: `^${oldDomain}` } },
-                { idFrontImage: { $regex: `^${oldDomain}` } },
-                { idBackImage: { $regex: `^${oldDomain}` } }
-            ]
+            $or: [{ image: { $regex: `^${oldDomain}` } }, { idFrontImage: { $regex: `^${oldDomain}` } }, { idBackImage: { $regex: `^${oldDomain}` } }],
         });
 
         if (usersToUpdate.length === 0) {
@@ -821,7 +591,7 @@ export const updateReelUrl = async (req, res) => {
 
             return {
                 userId: user._id,
-                updatedFields
+                updatedFields,
             };
         });
 
@@ -829,7 +599,7 @@ export const updateReelUrl = async (req, res) => {
 
         res.status(200).json({
             message: "User image URLs updated successfully",
-            updatedUsers: results
+            updatedUsers: results,
         });
     } catch (error) {
         console.error("Error updating user image URLs:", error);

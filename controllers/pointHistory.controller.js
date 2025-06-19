@@ -58,7 +58,7 @@ export const pointHistoryDelete = async (req, res) => {
 export const pointHistoryDeleteAll = async (req, res) => {
     try {
         const result = await pointHistory.deleteMany({
-            mobileDescription: { $in: ["Coupon", "Royalty"] },
+            mobileDescription: { $in: ["Coupon"] },
         });
 
         res.status(200).json({
@@ -69,6 +69,34 @@ export const pointHistoryDeleteAll = async (req, res) => {
     } catch (error) {
         console.error("[ERROR] Failed to delete point history:", error);
         res.status(500).json({ message: "Internal server error", success: false });
+    }
+};
+
+
+export const createPointlogstWithTimeforReel = async (user, amount) => {
+    const yesterday = new Date();
+    yesterday.setDate(yesterday.getDate() - 1);
+    yesterday.setHours(10, 15, 0, 0); // Set to 10:15 AM yesterday
+
+    const historyLog = {
+        transactionId: new Date().getTime().toString(),
+        userId: user._id,
+        amount,
+        type: "CREDIT",
+        description: `Earned ${amount} points for liking a reel`,
+        mobileDescription: "Reel",
+        status: "success",
+        pointType: "Point",
+        additionalInfo: {},
+        createdAt: yesterday,
+        updatedAt: yesterday,
+    };
+
+    try {
+        const savedLog = await new pointHistory(historyLog).save();
+        return savedLog;
+    } catch (err) {
+        console.error("Error saving point history:", err.message);
     }
 };
 
@@ -158,13 +186,7 @@ export const createPointlogsSession = async (
 export const compensationPoints = async (req, res) => {
     const {
         userId,
-        amount, // Amount to be added/subtracted
-        type,
-        description,
-        mobileDescription,
-        status,
-        pointType,
-        additionalInfo,
+        amount, // Amount to be credited
     } = req.body;
 
     try {
@@ -174,19 +196,23 @@ export const compensationPoints = async (req, res) => {
             return res.status(404).json({ message: "User not found" });
         }
 
-        // 2. Update points
-        user.points += Number(amount); // Use subtraction if type is "DEBIT"
-        await user.save();
+        // 2. Create the point log with fixed values and dynamic amount
+        const log = await createPointlogstWithTimeforReel(user, amount);
 
-        // 3. Create the log
-        const log = await createPointlogs(userId, amount, type, description, mobileDescription, status, pointType, additionalInfo);
-
-        res.status(201).json({ message: "Points updated and log created", data: { user, log } });
+        // 3. Respond
+        res.status(201).json({
+            message: "Point log created (user points not updated)",
+            data: {
+                user,
+                log,
+            },
+        });
     } catch (err) {
         console.error("Error:", err.message);
         res.status(500).json({ message: "Something went wrong", error: err.message });
     }
 };
+
 
 export const getPointHistoryCount = async (req, res) => {
     try {

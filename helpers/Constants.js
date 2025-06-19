@@ -2,6 +2,7 @@ export const rolesObj = {
     ADMIN: "ADMIN",
     CARPENTER: "CARPENTER",
     CONTRACTOR:"CONTRACTOR",
+    SUPERADMIN:"SUPERADMIN",
 };
 
 export const ErrorMessages = {

@@ -23,6 +23,7 @@ import fs from "fs";
 import PDFDocument from "pdfkit";
 import path from "path";
 import pointHistoryModel from "../models/pointHistory.model";
+import moment from "moment";
 
 const jsonFilePath = "D:/Turningpoint/loyaty_app_backend/controllers/backup.json";
 
@@ -167,15 +168,14 @@ export const getAllCoupons = async (req, res, next) => {
     }
 };
 
+
 export const addFieldsinCoupon = async (req, res, next) => {
     try {
-        // Fetch all users with _id and email
         const users = await Users.find({}, { _id: 1, email: 1 });
 
         let totalUpdated = 0;
 
         for (const user of users) {
-            // Find all coupons for this user
             const coupons = await Coupon.find({ scannedEmail: user.email });
 
             if (coupons.length > 0) {
@@ -185,15 +185,15 @@ export const addFieldsinCoupon = async (req, res, next) => {
                         update: {
                             $set: {
                                 carpenterId: user._id,
-                                carpenterPoints: Number(coupon.value), // Convert before updating
+                                carpenterPoints: Number(coupon.value),
                             },
                         },
                     },
                 }));
 
-                // Perform bulk update
-                const result = await Coupon.bulkWrite(bulkOps);
-                totalUpdated += result.modifiedCount;
+                // ✅ Use native driver to prevent updatedAt from updating
+                const result = await Coupon.collection.bulkWrite(bulkOps);
+                totalUpdated += result.modifiedCount || result.nModified || 0;
             }
         }
 
@@ -204,6 +204,7 @@ export const addFieldsinCoupon = async (req, res, next) => {
         res.status(500).json({ error: "Error updating coupons." });
     }
 };
+
 
 export const removeFieldsFromCoupon = async (req, res, next) => {
     try {
@@ -467,7 +468,7 @@ export const getUsedCouponsforMap = async (req, res, next) => {
         }
 
         // Fetch the coupons based on the dynamic query
-        let CouponArr = await Coupon.find(query).populate("carpenterId","name").lean().exec();
+        let CouponArr = await Coupon.find(query).populate("carpenterId", "name").lean().exec();
 
         res.status(200).json({ message: "List of scanned coupons", data: CouponArr, success: true });
     } catch (error) {
@@ -535,7 +536,7 @@ export const getScannedCouponsByCarpenterId = async (req, res, next) => {
         }
 
         // Fetch scanned coupons based on carpenterId and optional productName
-        let scannedCoupons = await Coupon.find(query).populate("carpenterId","name").lean().exec();
+        let scannedCoupons = await Coupon.find(query).populate("carpenterId", "name").lean().exec();
 
         // Get product totals (always based on carpenterId only)
         const productCounts = await Coupon.aggregate([
@@ -1187,11 +1188,13 @@ export const couponMultipleDelete = async (req, res, next) => {
 export const getExcelReportOfCoupons = async (req, res) => {
     try {
         // Fetch all coupons
-        const coupons = await Coupon.find().exec();
+       const coupons = await Coupon.find({ maximumNoOfUsersAllowed: 0 }).sort({ updatedAt: -1 }).exec();
+
 
         // Create an Excel workbook
         const workbook = new ExcelJS.Workbook();
-        const worksheet = workbook.addWorksheet("Coupons Report");
+        const reportDate = moment().format("DD-MM-YY");
+        const worksheet = workbook.addWorksheet(`Coupons Report - ${reportDate}`);
 
         // Define columns for the Excel sheet
         worksheet.columns = [
@@ -1199,10 +1202,9 @@ export const getExcelReportOfCoupons = async (req, res) => {
             { header: "Value", key: "value" },
             { header: "Product ID", key: "productId" },
             { header: "Product Name", key: "productName" },
-            { header: "Max Users Allowed", key: "maximumNoOfUsersAllowed" },
             { header: "Scanned User Name", key: "scannedUserName" },
             { header: "Scanned Email", key: "scannedEmail" },
-            { header: "Scanned At", key: "createdAt" },
+            { header: "Scanned At", key: "updatedAt" },
         ];
 
         // Prepare and add coupon data
@@ -1212,11 +1214,11 @@ export const getExcelReportOfCoupons = async (req, res) => {
                 value: coupon.value,
                 productId: coupon.productId,
                 productName: coupon.productName,
-                maximumNoOfUsersAllowed: coupon.maximumNoOfUsersAllowed || "N/A",
-
                 scannedUserName: coupon.scannedUserName || "N/A",
                 scannedEmail: coupon.scannedEmail || "N/A",
-                createdAt: coupon.createdAt ? new Date(coupon.createdAt).toLocaleString() : "N/A",
+              updatedAt: coupon.updatedAt
+                    ? moment(coupon.updatedAt).format("DD/MM/YY hh:mm A")
+                    : "N/A",
             });
         });
 
@@ -1583,3 +1585,309 @@ export const getScannedCouponsWithPointMatchContractorForAllUsers = async (req, 
         next(error);
     }
 };
+
+export const createPointHistoryforContractor = async (req, res, next) => {
+    try {
+        console.log("[INFO] Request received to process contractor point logs using carpenterId → contractor → contractorUser");
+
+        // Step 1: Get all distinct carpenterIds from coupons
+        const distinctCarpenterIds = await Coupon.distinct("carpenterId");
+
+        if (!distinctCarpenterIds || distinctCarpenterIds.length === 0) {
+            console.warn("[WARN] No carpenterId found in any coupon.");
+            return res.status(404).json({ message: "No carpenter data found", success: false });
+        }
+
+        let totalCouponsProcessed = 0;
+        let totalPointsCredited = 0;
+
+        for (const carpenterId of distinctCarpenterIds) {
+            // Step 2: Find all coupons for the carpenter and populate carpenter info
+            const coupons = await Coupon.find({ carpenterId })
+                .populate({
+                    path: "carpenterId",
+                    select: "name email contractor", // embedded contractor object
+                })
+                .lean();
+
+            if (!coupons || coupons.length === 0) {
+                console.log(`[INFO] No coupons found for carpenterId: ${carpenterId}`);
+                continue;
+            }
+
+            const carpenter = coupons[0]?.carpenterId;
+            const embeddedContractor = carpenter?.contractor;
+
+            if (!embeddedContractor || !embeddedContractor.businessName) {
+                console.warn(`[SKIPPED] No contractor info found for carpenter ${carpenter?.name || "Unknown"}`);
+                continue;
+            }
+
+            // Step 3: Find contractor user based on businessName
+            const contractorUser = await Users.findOne({
+                businessName: embeddedContractor.businessName,
+            }).lean();
+
+            if (!contractorUser) {
+                console.warn(`[SKIPPED] No user found with businessName: ${embeddedContractor.businessName}`);
+                continue;
+            }
+
+            for (const coupon of coupons) {
+                const couponName = coupon.name || "Unknown Coupon";
+                const productName = coupon.productName || "";
+                const couponValue = coupon.value || 0;
+                const contractorPoints = Math.floor(couponValue * 0.5);
+
+                if (contractorPoints > 0) {
+                    const contractorPointDescription = `Contractor ${contractorUser.name} got ${contractorPoints} points (50% of coupon points) from ${productName} - ${couponName}`;
+
+                    const log = await createPointlogstWithTime(
+                        contractorUser._id.toString(), // Actual contractor user ID
+                        contractorPoints,
+                        pointTransactionType.CREDIT,
+                        contractorPointDescription,
+                        "Royalty",
+                        "success",
+                        "Point",
+                        { couponId: coupon._id },
+                        coupon.updatedAt
+                    );
+
+                    totalPointsCredited += contractorPoints;
+                    console.log(`[LOG CREATED] Contractor Point Log for ${contractorUser.email || contractorUser.phone}:`, log);
+                }
+            }
+
+            totalCouponsProcessed += coupons.length;
+        }
+
+        res.status(200).json({
+            message: "Contractor point logs created successfully by matching contractor.businessName",
+            totalCouponsProcessed,
+            totalPointsCredited,
+            success: true,
+        });
+    } catch (error) {
+        console.error("[ERROR] Failed to process contractor point logs:", error);
+        next(error);
+    }
+};
+
+export const fixCouponsUpdatedAt = async (req, res, next) => {
+    try {
+        const coupons = await Coupon.find({
+            maximumNoOfUsersAllowed: { $ne: 1 },
+        });
+        const usedPointHistoryIds = new Set();
+        const updates = [];
+        const unmatched = [];
+
+        for (const coupon of coupons) {
+            const { carpenterId, carpenterPoints } = coupon;
+
+            const matchingLog = await pointHistoryModel
+                .findOne({
+                    userId: carpenterId,
+                    amount: carpenterPoints,
+                    type: "CREDIT",
+                    status: "success",
+                    description: { $regex: /Coupon earned/i },
+                })
+                .sort({ createdAt: -1 });
+
+            if (matchingLog && !usedPointHistoryIds.has(matchingLog._id.toString())) {
+                const oldUpdatedAt = coupon.updatedAt;
+
+                coupon.updatedAt = matchingLog.updatedAt;
+                await coupon.save();
+
+                usedPointHistoryIds.add(matchingLog._id.toString());
+
+                updates.push({
+                    couponId: coupon._id,
+                    couponName: coupon.name,
+                    oldUpdatedAt,
+                    newUpdatedAt: matchingLog.updatedAt,
+                    matchedTransactionId: matchingLog.transactionId,
+                    matchedLogId: matchingLog._id,
+                });
+            } else {
+                unmatched.push({
+                    couponId: coupon._id,
+                    couponName: coupon.name,
+                    carpenterId,
+                    carpenterPoints,
+                    reason: matchingLog ? "Duplicate log already used" : "No matching log found",
+                });
+            }
+        }
+
+        res.json({
+            message: "Coupon updatedAt fields processed.",
+            totalCoupons: coupons.length,
+            updatedCoupons: updates.length,
+            unmatchedCoupons: unmatched.length,
+            updates,
+            unmatched,
+        });
+    } catch (error) {
+        console.error("Error fixing coupons:", error);
+        res.status(500).json({ error: "Internal server error" });
+    }
+};
+
+export const getMatchingLogsForCouponsold = async (req, res) => {
+    try {
+        const { carpenterId } = req.params;
+
+        if (!carpenterId) {
+            return res.status(400).json({ error: "carpenterId is required" });
+        }
+
+        const coupons = await Coupon.find({
+            carpenterId,
+            maximumNoOfUsersAllowed: { $ne: 1 },
+        });
+
+        const usedPointHistoryIds = new Set();
+        const matchingLogs = [];
+        const updatedCoupons = [];
+
+        console.log(`Found ${coupons.length} coupons for carpenterId: ${carpenterId}`);
+
+        for (const coupon of coupons) {
+            const { _id, name, carpenterPoints } = coupon;
+
+            console.log(`\nChecking coupon: ${name} (${_id})`);
+
+            const matchingLog = await pointHistoryModel
+                .findOne({
+                    userId: carpenterId,
+                    amount: carpenterPoints,
+                    type: "CREDIT",
+                    status: "success",
+                    description: { $regex: /Coupon earned/i },
+                })
+                .sort({ createdAt: -1 });
+
+            if (matchingLog) {
+                console.log(`✔ Found matching log: ${matchingLog._id} at ${matchingLog.createdAt}`);
+
+                if (!usedPointHistoryIds.has(matchingLog._id.toString())) {
+                    const oldUpdatedAt = coupon.updatedAt;
+
+                    // ⚠️ Use updateOne with timestamps: false to manually set updatedAt
+                    await Coupon.updateOne({ _id: coupon._id }, { $set: { updatedAt: matchingLog.createdAt } }, { timestamps: false });
+
+                    usedPointHistoryIds.add(matchingLog._id.toString());
+
+                    matchingLogs.push({
+                        couponId: _id,
+                        couponName: name,
+                        oldUpdatedAt,
+                        newUpdatedAt: matchingLog.createdAt,
+                        matchedLogId: matchingLog._id,
+                        matchedTransactionId: matchingLog.transactionId,
+                    });
+
+                    updatedCoupons.push(name);
+
+                    console.log(`✔ Updated coupon: ${name}`);
+                } else {
+                    console.log(`✘ Log already used for another coupon`);
+                }
+            } else {
+                console.log(`✘ No matching log found for coupon: ${name}`);
+            }
+        }
+
+        return res.json({
+            message: "Updated coupons for given user",
+            totalCouponsChecked: coupons.length,
+            updatedCoupons: updatedCoupons.length,
+            updates: matchingLogs,
+        });
+    } catch (error) {
+        console.error("❌ Error updating coupons for user:", error);
+        return res.status(500).json({ error: "Internal server error" });
+    }
+};
+
+export const getMatchingLogsForCoupons = async (req, res) => {
+    try {
+        const coupons = await Coupon.find({
+            maximumNoOfUsersAllowed: { $ne: 1 },
+        });
+
+        const usedPointHistoryIds = new Set();
+        const matchingLogs = [];
+        const updatedCoupons = [];
+
+        console.log(`Found ${coupons.length} coupons to process.`);
+
+        for (const coupon of coupons) {
+            const { _id, name, carpenterId, carpenterPoints } = coupon;
+
+            if (!carpenterId || !carpenterPoints) {
+                console.warn(`⚠️ Skipping coupon ${name} (${_id}) - missing carpenterId or carpenterPoints`);
+                continue;
+            }
+
+            console.log(`\nChecking coupon: ${name} (${_id}) for carpenterId: ${carpenterId}`);
+
+            const matchingLog = await pointHistoryModel
+                .findOne({
+                    userId: carpenterId,
+                    amount: carpenterPoints,
+                    type: "CREDIT",
+                    status: "success",
+                    description: { $regex: /Coupon earned/i },
+                })
+                .sort({ createdAt: -1 });
+
+            if (matchingLog) {
+                console.log(`✔ Found matching log: ${matchingLog._id} at ${matchingLog.createdAt}`);
+
+                if (!usedPointHistoryIds.has(matchingLog._id.toString())) {
+                    const oldUpdatedAt = coupon.updatedAt;
+
+                    // ✅ Use updateOne with timestamps disabled to manually set updatedAt
+                    await Coupon.updateOne({ _id: coupon._id }, { $set: { updatedAt: matchingLog.createdAt } }, { timestamps: false });
+
+                    usedPointHistoryIds.add(matchingLog._id.toString());
+
+                    matchingLogs.push({
+                        couponId: _id,
+                        couponName: name,
+                        carpenterId,
+                        oldUpdatedAt,
+                        newUpdatedAt: matchingLog.createdAt,
+                        matchedLogId: matchingLog._id,
+                        matchedTransactionId: matchingLog.transactionId,
+                    });
+
+                    updatedCoupons.push(name);
+                    console.log(`✔ Updated coupon: ${name}`);
+                } else {
+                    console.log(`✘ Skipped: Matching log already used`);
+                }
+            } else {
+                console.log(`✘ No matching log found for coupon: ${name}`);
+            }
+        }
+
+        return res.json({
+            message: "Processed all coupons",
+            totalCouponsChecked: coupons.length,
+            updatedCoupons: updatedCoupons.length,
+            updates: matchingLogs,
+        });
+    } catch (error) {
+        console.error("❌ Error processing coupons:", error);
+        return res.status(500).json({ error: "Internal server error" });
+    }
+};
+
+
+

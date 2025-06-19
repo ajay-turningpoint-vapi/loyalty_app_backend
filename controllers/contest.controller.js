@@ -302,7 +302,7 @@ export const getCurrentContestWorking = async (req, res, next) => {
     }
 };
 
-export const getCurrentContes= async (req, res, next) => {
+export const getCurrentContest= async (req, res, next) => {
     try {
         let pipeline = [
             {

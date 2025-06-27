@@ -43,6 +43,8 @@ router.post("/", async (req, res) => {
         const updatedRestrictions = await createOrUpdateRestrictions({ blockedTimes, exemptedDates });
         res.status(200).json(updatedRestrictions);
     } catch (error) {
+        console.log(error);
+        
         res.status(500).json({ message: "Error saving restrictions", error });
     }
 });

@@ -24,9 +24,9 @@ const initializeRestrictions = async () => {
     const restriction = new Restriction({
         blockedTimes: [
             { startTime: "09:00", endTime: "13:00" }, // 9 AM - 1 PM
-            { startTime: "14:00", endTime: "16:00" }  // 2 PM - 4 PM
+            { startTime: "14:00", endTime: "18:00" }  // 2 PM - 6 PM
         ],
-        exemptedDates: ["2025-02-20"] // Allow full access on this date
+        exemptedDates: ["2025-06-29"] // Allow full access on this date
     });
 
     await restriction.save();

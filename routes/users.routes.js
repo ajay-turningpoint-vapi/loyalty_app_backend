@@ -109,7 +109,7 @@ router.put("/resetAllUsersPoints", resetAllUsersPoints);
 router.get("/getExcelReportOfUser", getExcelReportOfUsers);
 router.post("/getContractorUsingPhone", getContractorUsingPhone);
 router.get("/getAllCarpentersByContractorName", authorizeJwt, getAllCaprenterByContractorName);
-router.get("/getCaprentersByContractorNameAdmin/:name", authorizeJwt, getCaprentersByContractorNameAdmin);
+router.get("/getCaprentersByContractorNameAdmin/:phone", authorizeJwt, getCaprentersByContractorNameAdmin);
 router.get("/getUserStatsReport/:id", getUserStatsReport);
 router.get("/getUserPointHistoryById", getPointHistoryByUserId);
 router.get("/getUsers", authorizeJwt, getUsers);

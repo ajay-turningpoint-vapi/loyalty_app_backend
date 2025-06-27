@@ -21,7 +21,6 @@ exports.sendNotification = async (req, res) => {
 
         // Determine the media URL (image or video)
         const mediaUrl = videoPromotion?.fileUrl || imageUrl;
-        console.log("Media URL:", mediaUrl); // Debugging
 
         // Prepare the notification payload
         const payload = {

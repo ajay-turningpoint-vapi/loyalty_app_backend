@@ -1,4 +1,5 @@
 import mongoose from "mongoose";
+const ObjectId = mongoose.Types.ObjectId;
 import { pointTransactionType } from "../helpers/Constants";
 import ReelLikes from "../models/reelLikes.model";
 
@@ -6,33 +7,7 @@ import Reel from "../models/reels.model";
 import User from "../models/user.model";
 import { createPointlogs } from "./pointHistory.controller";
 
-
-export const likeReelsOld = async (req, res, next) => {
-    try {
-        const { userId, reelId } = req.body;
-        const existingLike = await ReelLikes.findOne({ userId, reelId }).exec();
-
-        if (!existingLike) {
-            const reelObj = await Reel.findById(reelId).exec();
-            if (reelObj) {
-                const pointsToEarn = parseInt(reelObj.points);
-                let mobileDescription = "Reel";
-                await createPointlogs(userId, pointsToEarn, pointTransactionType.CREDIT, `Earned ${pointsToEarn} points for liking a reel`, mobileDescription, "success");
-                await User.findByIdAndUpdate(userId, { $inc: { points: pointsToEarn, totalPointsEarned: pointsToEarn } }).exec();
-                await ReelLikes.create({ userId, reelId });
-            }
-
-            res.status(200).json({ message: "Liked Reel Successfully", success: true });
-        } else {
-            res.status(200).json({ message: "Reel already liked", success: false });
-        }
-    } catch (err) {
-        next(err);
-    }
-};
-
-export const likeReels = async (req, res, next) => {
-   
+export const likeReelswithoutObjectId = async (req, res, next) => {
     try {
         const { userId, reelId } = req.body;
 
@@ -62,17 +37,66 @@ export const likeReels = async (req, res, next) => {
 
         res.status(200).json({ message: "Liked Reel Successfully", success: true });
     } catch (err) {
-        next(err);
+        console.log("Error liking reel:", err);
+
+        // next(err);
     }
-   
 };
 
-export const getLikeCount = async (req, res, next) => {
+export const getLikeCountwithoutObjectId = async (req, res, next) => {
     try {
         let reelLikedObj = await ReelLikes.findOne({ userId: req.body.userId, reelId: req.body.reelId }).exec();
 
         let reelLikesCount = await ReelLikes.find({ reelId: req.body.reelId }).count().exec();
         res.status(200).json({ message: "Likes", data: { likeCount: reelLikesCount, liked: reelLikedObj ? true : false }, success: true });
+    } catch (err) {
+        next(err);
+    }
+};
+
+export const likeReels = async (req, res, next) => {
+    try {
+        const { userId, reelId } = req.body;
+
+        const reelObjectId = new ObjectId(reelId);
+
+        const [existingLike, reelObj] = await Promise.all([ReelLikes.findOne({ userId, reelId: reelObjectId }).lean(), Reel.findById(reelObjectId).lean()]);
+
+        if (existingLike) {
+            return res.status(200).json({ message: "Reel already liked", success: false });
+        }
+
+        if (!reelObj) {
+            return res.status(404).json({ message: "Reel not found", success: false });
+        }
+
+        const pointsToEarn = parseInt(reelObj.points) || 0;
+
+        await Promise.all([
+            ReelLikes.create({ userId, reelId: reelObjectId }),
+            Reel.updateOne({ _id: reelObjectId }, { $inc: { likeCount: 1 } }),
+            User.updateOne({ _id: userId }, { $inc: { points: pointsToEarn, totalPointsEarned: pointsToEarn } }),
+            createPointlogs(userId, pointsToEarn, pointTransactionType.CREDIT, `Earned ${pointsToEarn} points for liking a reel`, "Reel", "success"),
+        ]);
+
+        res.status(200).json({ message: "Liked Reel Successfully", success: true });
+    } catch (err) {
+        console.log("Error liking reel:", err);
+        // next(err);
+    }
+};
+
+export const getLikeCount = async (req, res, next) => {
+    try {
+        const reelObjectId = new ObjectId(req.body.reelId);
+
+        const [reelLikedObj, reelLikesCount] = await Promise.all([ReelLikes.findOne({ userId: req.body.userId, reelId: reelObjectId }), ReelLikes.countDocuments({ reelId: reelObjectId })]);
+
+        res.status(200).json({
+            message: "Likes",
+            data: { likeCount: reelLikesCount, liked: !!reelLikedObj },
+            success: true,
+        });
     } catch (err) {
         next(err);
     }

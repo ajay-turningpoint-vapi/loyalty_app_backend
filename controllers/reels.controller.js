@@ -270,7 +270,7 @@ export const getReelsPaginatedworkingAWS = async (req, res, next) => {
     }
 };
 
-export const getReelsPaginated = async (req, res, next) => {
+export const getReelsPaginatedWithOutObjecTid = async (req, res, next) => {
     try {
         if (!req.user) {
             return res.status(401).json({ message: "Unauthorized" });
@@ -278,19 +278,20 @@ export const getReelsPaginated = async (req, res, next) => {
 
         const limit = Math.max(parseInt(req.query.limit) || 10, 1);
         const userId = req.user.userId;
-        const userObjectId = new mongoose.Types.ObjectId(userId);
 
-        // 1. Match unliked reels first and flag them
         let reelsArr = await Reels.aggregate([
             {
                 $lookup: {
                     from: "reellikes",
-                    let: { reelId: "$_id" },
+                    let: { reelIdStr: { $toString: "$_id" }, userId: userId }, // userId is a string
                     pipeline: [
                         {
                             $match: {
                                 $expr: {
-                                    $and: [{ $eq: ["$userId", userId] }, { $eq: ["$reelId", "$$reelId"] }],
+                                    $and: [
+                                        { $eq: ["$userId", "$$userId"] }, // both strings
+                                        { $eq: ["$reelId", "$$reelIdStr"] },
+                                    ],
                                 },
                             },
                         },
@@ -305,12 +306,14 @@ export const getReelsPaginated = async (req, res, next) => {
                     },
                 },
             },
+            // {
+            //     $match: {
+            //         likedByCurrentUser: false,
+            //     },
+            // },
             {
-                $match: {
-                    likedByCurrentUser: false, // only unliked
-                },
+                $sample: { size: limit }, // limit is the number of reels you want
             },
-            { $sample: { size: limit } },
         ]);
 
         // Async activity logging (non-blocking)
@@ -329,6 +332,63 @@ export const getReelsPaginated = async (req, res, next) => {
     }
 };
 
+export const getReelsPaginated = async (req, res, next) => {
+    try {
+        if (!req.user) {
+            return res.status(401).json({ message: "Unauthorized" });
+        }
+
+        const limit = Math.max(parseInt(req.query.limit) || 10, 1);
+        const userId = req.user.userId;
+
+        // Aggregation pipeline to fetch random reels NOT already liked
+        const reelsArr = await Reels.aggregate([
+            {
+                $lookup: {
+                    from: "reellikes",
+                    let: { reelId: "$_id", userId: userId }, // both are ObjectId / String
+                    pipeline: [
+                        {
+                            $match: {
+                                $expr: {
+                                    $and: [{ $eq: ["$userId", "$$userId"] }, { $eq: ["$reelId", "$$reelId"] }],
+                                },
+                            },
+                        },
+                    ],
+                    as: "userLiked",
+                },
+            },
+            {
+                $addFields: {
+                    likedByCurrentUser: { $gt: [{ $size: "$userLiked" }, 0] },
+                },
+            },
+            {
+                $match: {
+                    likedByCurrentUser: false, // Filter out already liked reels
+                },
+            },
+            {
+                $sample: { size: limit }, // Random sampling
+            },
+        ]);
+
+        // Async activity logging (non-blocking)
+        ActivityLog.create({ userId, type: "Watching Reels" }).catch((err) => console.error("Activity log error:", err));
+
+        res.status(200).json({
+            message: "Reels Found",
+            data: reelsArr,
+            success: true,
+            limit,
+            hasMore: reelsArr.length === limit,
+        });
+    } catch (err) {
+        console.error("Error in getReelsPaginated:", err);
+        next(err);
+    }
+};
 
 export const getReelsPaginatedCategorytest = async (req, res, next) => {
     try {
@@ -604,5 +664,26 @@ export const updateReelUrl = async (req, res) => {
     } catch (error) {
         console.error("Error updating user image URLs:", error);
         res.status(500).json({ message: "Internal server error" });
+    }
+};
+
+export const updateIdtoObjectId = async (req, res) => {
+    try {
+        const result = await ReelLikes.updateMany({ reelId: { $type: "string" } }, [
+            {
+                $set: {
+                    reelId: { $toObjectId: "$reelId" },
+                },
+            },
+        ]);
+
+        res.status(200).json({
+            message: "reelId fields updated successfully to ObjectId",
+            modifiedCount: result.modifiedCount,
+            matchedCount: result.matchedCount,
+        });
+    } catch (error) {
+        console.error("Error updating reelId fields:", error);
+        res.status(500).json({ error: "Internal Server Error" });
     }
 };

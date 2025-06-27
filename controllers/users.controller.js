@@ -2077,55 +2077,49 @@ export const registerAdmin = async (req, res, next) => {
 //     }
 // };
 
-
-
-
-
 // total customer and active customer
 
-
 export const loginAdmin = async (req, res, next) => {
-  try {
-    const adminObj = await Users.findOne({
-      $or: [
-        { email: new RegExp(`^${req.body.email}$`, 'i') }, // case-insensitive email match
-        { phone: req.body.phone }
-      ],
-      role: { $in: [rolesObj.ADMIN, rolesObj.SUPERADMIN] } // match either ADMIN or SUPERADMIN
-    })
-      .lean()
-      .exec();
+    try {
+        const adminObj = await Users.findOne({
+            $or: [
+                { email: new RegExp(`^${req.body.email}$`, "i") }, // case-insensitive email match
+                { phone: req.body.phone },
+            ],
+            role: { $in: [rolesObj.ADMIN, rolesObj.SUPERADMIN] }, // match either ADMIN or SUPERADMIN
+        })
+            .lean()
+            .exec();
 
-    if (adminObj) {
-      const passwordCheck = await comparePassword(adminObj.password, req.body.password);
-      if (passwordCheck) {
-        // Use the actual role from the user object
-        const userPayload = {
-          name: adminObj.name,
-          email: adminObj.email,
-          phone: adminObj.phone,
-          _id: adminObj._id,
-          role: adminObj.role
-        };
+        if (adminObj) {
+            const passwordCheck = await comparePassword(adminObj.password, req.body.password);
+            if (passwordCheck) {
+                // Use the actual role from the user object
+                const userPayload = {
+                    name: adminObj.name,
+                    email: adminObj.email,
+                    phone: adminObj.phone,
+                    _id: adminObj._id,
+                    role: adminObj.role,
+                };
 
-        const accessToken = await generateAccessJwt({
-          userId: adminObj._id,
-          role: adminObj.role,
-          user: userPayload
-        });
+                const accessToken = await generateAccessJwt({
+                    userId: adminObj._id,
+                    role: adminObj.role,
+                    user: userPayload,
+                });
 
-        res.status(200).json({ message: "Login Successful", token: accessToken });
-      } else {
-        throw { status: 401, message: "Invalid Password" };
-      }
-    } else {
-      throw { status: 401, message: "Admin Not Found" };
+                res.status(200).json({ message: "Login Successful", token: accessToken });
+            } else {
+                throw { status: 401, message: "Invalid Password" };
+            }
+        } else {
+            throw { status: 401, message: "Admin Not Found" };
+        }
+    } catch (err) {
+        next(err);
     }
-  } catch (err) {
-    next(err);
-  }
 };
-
 
 export const AWSNotification = async (req, res, next) => {
     try {
@@ -2555,7 +2549,7 @@ export const getUserContestsReportol = async (req, res, next) => {
     }
 };
 
-export const getUserContestsReport = async (req, res, next) => {
+export const getUserContestsReportT = async (req, res, next) => {
     try {
         if (!req.query.contestId) {
             return res.status(400).json({ message: "contestId query parameter is required" });
@@ -2672,6 +2666,177 @@ export const getUserContestsReport = async (req, res, next) => {
         // Respond with the fetched data including page information
 
         res.status(200).json({ data: result, page, totalPage, totalUsersJoined: joinedUsersCount });
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ message: "Internal server error" });
+    }
+};
+
+
+
+export const getUserContestsReport = async (req, res, next) => {
+    try {
+        if (!req.query.contestId) {
+            return res.status(400).json({ message: "contestId query parameter is required" });
+        }
+
+        const page = parseInt(req.query.page) || 1;
+        const limit = parseInt(req.query.limit) || 10;
+        const contestId = req.query.contestId;
+        const queryType = req.query.q;
+        const searchQuery = req.query.f ? req.query.f.trim() : null;
+
+        const matchCondition = {
+            ...(queryType === "winners" ? { status: "win" } : {}),
+            contestId: contestId,
+        };
+
+        const pipeline = [
+            {
+                $addFields: {
+                    userIdObject: { $toObjectId: "$userId" },
+                    contestIdObject: { $toObjectId: "$contestId" },
+                },
+            },
+            {
+                $lookup: {
+                    from: "users",
+                    localField: "userIdObject",
+                    foreignField: "_id",
+                    as: "userObj",
+                },
+            },
+            {
+                $lookup: {
+                    from: "contests",
+                    localField: "contestIdObject",
+                    foreignField: "_id",
+                    as: "contestObj",
+                },
+            },
+            {
+                $addFields: {
+                    userObj: { $arrayElemAt: ["$userObj", 0] },
+                    contestObj: { $arrayElemAt: ["$contestObj", 0] },
+                },
+            },
+            {
+                $match: matchCondition,
+            },
+            {
+                $addFields: {
+                    rankAsNumber: { $toInt: "$rank" },
+                },
+            },
+            ...(searchQuery
+                ? [
+                      {
+                          $match: {
+                              $or: [
+                                  { "userObj.name": { $regex: searchQuery, $options: "i" } },
+                                  { "userObj.phone": { $regex: searchQuery, $options: "i" } },
+                              ],
+                          },
+                      },
+                  ]
+                : []),
+            {
+                $project: {
+                    contestId: 1,
+                    contestObj: { name: 1 },
+                    createdAt: 1,
+                    rank: 1,
+                    rankAsNumber: 1,
+                    status: 1,
+                    note: 1,
+                    "userObj.phone": 1,
+                    "userObj.name": 1,
+                    "userObj.isBlocked": 1,
+                    userId: 1,
+                },
+            },
+            {
+                $sort:
+                    queryType === "winners"
+                        ? { rankAsNumber: 1 }
+                        : { createdAt: -1 },
+            },
+        ];
+
+        const [result, totalCount, totalUsersJoined] = await Promise.all([
+            UserContest.aggregate(pipeline)
+                .skip((page - 1) * limit)
+                .limit(limit),
+            UserContest.countDocuments(matchCondition),
+            UserContest.aggregate([
+                { $match: { contestId: contestId } },
+                { $group: { _id: "$userId" } },
+                { $count: "totalUsersJoined" },
+            ]),
+        ]);
+
+        const joinedUsersCount = totalUsersJoined.length > 0 ? totalUsersJoined[0].totalUsersJoined : 0;
+        const totalPage = Math.ceil(totalCount / limit);
+
+        let enrichedResult = result;
+
+        if (queryType === "winners") {
+            const currentContest = await Contest.findById(contestId);
+            const currentEndDateTime = new Date(`${currentContest.endDate.toISOString().split('T')[0]}T${currentContest.endTime}:00`);
+
+            const previousContest = await Contest.findOne({
+                endDate: { $lt: currentContest.endDate },
+            }).sort({ endDate: -1, endTime: -1 });
+
+            const previousEndDateTime = previousContest
+                ? new Date(`${previousContest.endDate.toISOString().split('T')[0]}T${previousContest.endTime}:00`)
+                : new Date(0);
+
+            enrichedResult = await Promise.all(
+                result.map(async (winner) => {
+                    const [totalEntries, scannedCoupons] = await Promise.all([
+                        UserContest.countDocuments({
+                            contestId: contestId,
+                            userId: winner.userId,
+                        }),
+                        CouponsModel.find({
+                            updatedAt: {
+                                $gt: previousEndDateTime,
+                                $lte: currentEndDateTime,
+                            },
+                            $or: [
+                                { carpenterId: winner.userId },
+                                { contractorId: winner.userId },
+                            ],
+                        }),
+                    ]);
+
+                    let totalScannedPoints = 0;
+                    for (const coupon of scannedCoupons) {
+                        if (String(coupon.carpenterId) === String(winner.userId)) {
+                            totalScannedPoints += coupon.carpenterPoints || 0;
+                        }
+                        if (String(coupon.contractorId) === String(winner.userId)) {
+                            totalScannedPoints += coupon.contractorPoints || 0;
+                        }
+                    }
+
+                    return {
+                        ...winner,
+                        totalEntries,
+                        totalScannedCoupons: scannedCoupons.length,
+                        totalScannedPoints,
+                    };
+                })
+            );
+        }
+
+        res.status(200).json({
+            data: enrichedResult,
+            page,
+            totalPage,
+            totalUsersJoined: joinedUsersCount,
+        });
     } catch (error) {
         console.error(error);
         res.status(500).json({ message: "Internal server error" });
@@ -3407,8 +3572,8 @@ export const getAllCaprenterByContractorName = async (req, res) => {
 
 export const getCaprentersByContractorNameAdmin = async (req, res) => {
     try {
-        const businessName = req.params.name;
-        const carpenters = await Users.find({ "contractor.businessName": { $in: businessName }, role: "CARPENTER" }).select("name phone email isActive kycStatus role points");
+        const phone = req.params.phone;
+        const carpenters = await Users.find({ "contractor.phone": { $in: phone }, role: "CARPENTER" }).select("name phone email isActive kycStatus role points");
 
         // if (carpenters.length === 0) {
         //     return res.status(404).json({ message: "No carpenters found for the specified business name" });
@@ -3825,12 +3990,11 @@ export const logout = async (req, res) => {};
 
 export const customDelete = async (req, res) => {
     try {
-        
     } catch (error) {
-        console.error('Error during deletion:', error);
-        res.status(500).json({ message: 'Internal server error' });
+        console.error("Error during deletion:", error);
+        res.status(500).json({ message: "Internal server error" });
     }
-}
+};
 
 // async (req, res) => {
 //     try {

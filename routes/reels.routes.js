@@ -1,5 +1,5 @@
 import express from "express";
-import { addReels, deleteById, deleteMultipleReels, getLikedReelsByUser, getRandomReels, getReels, getReelsAnalytics, getReelsPaginated, getReelTypesCount, reelLikeUpadte, updateById, updateReelUrl, updateType } from "../controllers/reels.controller";
+import { addReels, deleteById, deleteMultipleReels, getLikedReelsByUser, getRandomReels, getReels, getReelsAnalytics, getReelsPaginated, getReelTypesCount, reelLikeUpadte, updateById, updateIdtoObjectId, updateReelUrl, updateType } from "../controllers/reels.controller";
 import { authorizeJwt } from "../middlewares/auth.middleware";
 let router = express.Router();
 
@@ -17,5 +17,5 @@ router.patch("/updateById/:id", updateById);
 router.patch("/updateReelCategory", updateType);
 router.delete("/deleteById/:id", deleteById);
 router.patch("/deleteMultipleReels", deleteMultipleReels);
-
+router.post("/updateStringToObject", updateIdtoObjectId);
 export default router;

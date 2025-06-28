@@ -78,13 +78,11 @@ const timeRestrictionMiddleware = async (req, res, next) => {
     const currentDate = now.format("YYYY-MM-DD");
     const currentTime = now.format("HH:mm");
 
-    console.log("==============================");
-    console.log("IST Time (Full):", now.format());
-    console.log("IST Time (HH:mm):", currentTime);
+  
 
     const restriction = await getRestrictions();
 
-    console.log("Restriction Data from DB:", JSON.stringify(restriction, null, 2));
+   
 
     if (!restriction) {
         console.log("No restriction document found in database.");
@@ -95,14 +93,14 @@ const timeRestrictionMiddleware = async (req, res, next) => {
         });
     }
 
-    // Convert exemptedDates to Date-Time format (ISO 8601)
+    
     const exemptedDates = restriction.exemptedDates.map((date) => moment.tz(date, "Asia/Kolkata").format());
 
-    console.log("Exempted Dates:", exemptedDates);
+   
 
     // Check if today is an exempted date
     if (restriction.exemptedDates.includes(currentDate)) {
-        console.log(`Today's date (${currentDate}) is in exemptedDates → Allowing access`);
+     
         return res.json({
             blockedTimes: null,
             exemptedDates,
@@ -110,7 +108,7 @@ const timeRestrictionMiddleware = async (req, res, next) => {
         });
     }
 
-    console.log("Checking against blockedTimes...");
+   
 
     restriction.blockedTimes.forEach((slot) => {
         console.log(`Checking: (${currentTime} > ${slot.startTime}) && (${currentTime} < ${slot.endTime})`);
@@ -121,14 +119,13 @@ const timeRestrictionMiddleware = async (req, res, next) => {
         return currentTime > startTime && currentTime < endTime;
     });
 
-    console.log("Blocked Slot Found:", blockedSlot);
+
 
    if (blockedSlot) {
     const blockedStartDateTime = moment.tz(`${currentDate} ${blockedSlot.startTime}`, "YYYY-MM-DD HH:mm", "Asia/Kolkata").format();
     const blockedEndDateTime = moment.tz(`${currentDate} ${blockedSlot.endTime}`, "YYYY-MM-DD HH:mm", "Asia/Kolkata").format();
 
-    console.log("Blocked Start DateTime (FIXED):", blockedStartDateTime);
-    console.log("Blocked End DateTime (FIXED):", blockedEndDateTime);
+
 
     const nextAvailableDate = restriction.exemptedDates.find((date) => date > currentDate);
     const nextAvailableDateTime = nextAvailableDate ? moment.tz(nextAvailableDate, "Asia/Kolkata").format() : null;
@@ -145,7 +142,7 @@ const timeRestrictionMiddleware = async (req, res, next) => {
     });
 }
 
-    console.log("No active time restriction → Allowing access");
+   
     next();
 };
 

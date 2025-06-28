@@ -69,6 +69,7 @@ import {
     getTop50MonthlyCarpenters,
     userOnline,
     resetAllUsersPoints,
+    getUserContestsReportBlockedUser,
 } from "../controllers/users.controller";
 import { authorizeJwt } from "../middlewares/auth.middleware";
 import { sendSingleNotificationMiddleware } from "../middlewares/fcm.middleware";
@@ -123,6 +124,7 @@ router.get("/getContractors", getContractors);
 router.get("/getUserById/:id", authorizeJwt, getUserById);
 router.get("/getUserContests", getUserContests);
 router.get("/getUserContestsReport", getUserContestsReport);
+router.get("/getUserContestsReportBlocked", getUserContestsReportBlockedUser);
 router.patch("/getUserContestsReportNote", addNoteFieldToUserContests);
 router.get("/getUserContestsReportLose", getUserContestsReportLose);
 router.get("/getUserContestsCount/:id", getUserContestsJoinCount);

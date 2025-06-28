@@ -2672,8 +2672,6 @@ export const getUserContestsReportT = async (req, res, next) => {
     }
 };
 
-
-
 export const getUserContestsReport = async (req, res, next) => {
     try {
         if (!req.query.contestId) {
@@ -2732,10 +2730,7 @@ export const getUserContestsReport = async (req, res, next) => {
                 ? [
                       {
                           $match: {
-                              $or: [
-                                  { "userObj.name": { $regex: searchQuery, $options: "i" } },
-                                  { "userObj.phone": { $regex: searchQuery, $options: "i" } },
-                              ],
+                              $or: [{ "userObj.name": { $regex: searchQuery, $options: "i" } }, { "userObj.phone": { $regex: searchQuery, $options: "i" } }],
                           },
                       },
                   ]
@@ -2756,10 +2751,7 @@ export const getUserContestsReport = async (req, res, next) => {
                 },
             },
             {
-                $sort:
-                    queryType === "winners"
-                        ? { rankAsNumber: 1 }
-                        : { createdAt: -1 },
+                $sort: queryType === "winners" ? { rankAsNumber: 1 } : { createdAt: -1 },
             },
         ];
 
@@ -2768,11 +2760,7 @@ export const getUserContestsReport = async (req, res, next) => {
                 .skip((page - 1) * limit)
                 .limit(limit),
             UserContest.countDocuments(matchCondition),
-            UserContest.aggregate([
-                { $match: { contestId: contestId } },
-                { $group: { _id: "$userId" } },
-                { $count: "totalUsersJoined" },
-            ]),
+            UserContest.aggregate([{ $match: { contestId: contestId } }, { $group: { _id: "$userId" } }, { $count: "totalUsersJoined" }]),
         ]);
 
         const joinedUsersCount = totalUsersJoined.length > 0 ? totalUsersJoined[0].totalUsersJoined : 0;
@@ -2782,15 +2770,13 @@ export const getUserContestsReport = async (req, res, next) => {
 
         if (queryType === "winners") {
             const currentContest = await Contest.findById(contestId);
-            const currentEndDateTime = new Date(`${currentContest.endDate.toISOString().split('T')[0]}T${currentContest.endTime}:00`);
+            const currentEndDateTime = new Date(`${currentContest.endDate.toISOString().split("T")[0]}T${currentContest.endTime}:00`);
 
             const previousContest = await Contest.findOne({
                 endDate: { $lt: currentContest.endDate },
             }).sort({ endDate: -1, endTime: -1 });
 
-            const previousEndDateTime = previousContest
-                ? new Date(`${previousContest.endDate.toISOString().split('T')[0]}T${previousContest.endTime}:00`)
-                : new Date(0);
+            const previousEndDateTime = previousContest ? new Date(`${previousContest.endDate.toISOString().split("T")[0]}T${previousContest.endTime}:00`) : new Date(0);
 
             enrichedResult = await Promise.all(
                 result.map(async (winner) => {
@@ -2804,10 +2790,7 @@ export const getUserContestsReport = async (req, res, next) => {
                                 $gt: previousEndDateTime,
                                 $lte: currentEndDateTime,
                             },
-                            $or: [
-                                { carpenterId: winner.userId },
-                                { contractorId: winner.userId },
-                            ],
+                            $or: [{ carpenterId: winner.userId }, { contractorId: winner.userId }],
                         }),
                     ]);
 
@@ -2836,6 +2819,111 @@ export const getUserContestsReport = async (req, res, next) => {
             page,
             totalPage,
             totalUsersJoined: joinedUsersCount,
+        });
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ message: "Internal server error" });
+    }
+};
+
+export const getUserContestsReportBlockedUser = async (req, res, next) => {
+    try {
+        if (!req.query.contestId) {
+            return res.status(400).json({ message: "contestId query parameter is required" });
+        }
+
+        const contestId = req.query.contestId;
+        const searchQuery = req.query.f ? req.query.f.trim() : null;
+
+        const basePipeline = [
+            {
+                $addFields: {
+                    userIdObject: { $toObjectId: "$userId" },
+                    contestIdObject: { $toObjectId: "$contestId" },
+                },
+            },
+            {
+                $lookup: {
+                    from: "users",
+                    localField: "userIdObject",
+                    foreignField: "_id",
+                    as: "userObj",
+                },
+            },
+            { $unwind: "$userObj" },
+            {
+                $lookup: {
+                    from: "contests",
+                    localField: "contestIdObject",
+                    foreignField: "_id",
+                    as: "contestObj",
+                },
+            },
+            { $unwind: "$contestObj" },
+            {
+                $match: {
+                    contestId: contestId,
+                    "userObj.isBlocked": true,
+                },
+            },
+            ...(searchQuery
+                ? [
+                      {
+                          $match: {
+                              $or: [{ "userObj.name": { $regex: searchQuery, $options: "i" } }, { "userObj.phone": { $regex: searchQuery, $options: "i" } }],
+                          },
+                      },
+                  ]
+                : []),
+        ];
+
+        // 👇 Full result pipeline
+        const resultPipeline = [
+            ...basePipeline,
+            {
+                $group: {
+                    _id: "$userId",
+                    latestEntry: { $first: "$$ROOT" },
+                },
+            },
+            {
+                $replaceRoot: { newRoot: "$latestEntry" },
+            },
+            {
+                $project: {
+                    contestId: 1,
+                    "contestObj.name": 1,
+                    createdAt: 1,
+                    rank: 1,
+                    status: 1,
+                    note: 1,
+                    "userObj.phone": 1,
+                    "userObj.name": 1,
+                    "userObj.isBlocked": 1,
+                    userId: 1,
+                },
+            },
+            { $sort: { createdAt: -1 } },
+        ];
+
+        // 👇 Count pipeline
+        const countPipeline = [
+            ...basePipeline,
+            {
+                $group: { _id: "$userId" },
+            },
+            {
+                $count: "totalBlockedUsers",
+            },
+        ];
+
+        const [result, countResult] = await Promise.all([UserContest.aggregate(resultPipeline), UserContest.aggregate(countPipeline)]);
+
+        const totalBlockedUsers = countResult[0]?.totalBlockedUsers || 0;
+
+        res.status(200).json({
+            data: result,
+            totalBlockedUsers,
         });
     } catch (error) {
         console.error(error);

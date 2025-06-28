@@ -5,6 +5,7 @@ import UserContest from "../models/userContest";
 import User from "../models/user.model";
 // import redisClient from "../redisClient";
 import mongoose from "mongoose";
+import redisClient from "../redisClient";
 
 // export const checkContest = async (date, time) => {
 //   try {
@@ -545,6 +546,8 @@ export const checkContest = async (date, time) => {
         if (entryUpdates.length > 0) {
             await UserContest.bulkWrite(entryUpdates, { session });
             console.log(`✅ ${entryUpdates.length} user entries updated with prizes.`);
+            await redisClient.del("currentContestRewards");
+            await redisClient.del("previousContestRewards");
         } else {
             console.log("⚠️ No updates made to user entries.");
         }

@@ -341,17 +341,20 @@ export const getReelsPaginated = async (req, res, next) => {
         const limit = Math.max(parseInt(req.query.limit) || 10, 1);
         const userId = req.user.userId;
 
-        // Aggregation pipeline to fetch random reels NOT already liked
-        const reelsArr = await Reels.aggregate([
+        // 1️⃣ Unliked reels (not present in reelLikes)
+        const unlikedReels = await Reels.aggregate([
             {
                 $lookup: {
                     from: "reellikes",
-                    let: { reelId: "$_id", userId: userId }, // both are ObjectId / String
+                    let: { reelId: "$_id" },
                     pipeline: [
                         {
                             $match: {
                                 $expr: {
-                                    $and: [{ $eq: ["$userId", "$$userId"] }, { $eq: ["$reelId", "$$reelId"] }],
+                                    $and: [
+                                        { $eq: ["$reelId", "$$reelId"] },
+                                        { $eq: ["$userId", userId] }, // userId is string
+                                    ],
                                 },
                             },
                         },
@@ -361,22 +364,72 @@ export const getReelsPaginated = async (req, res, next) => {
             },
             {
                 $addFields: {
-                    likedByCurrentUser: { $gt: [{ $size: "$userLiked" }, 0] },
+                    likedByCurrentUser: {
+                        $cond: [{ $gt: [{ $size: "$userLiked" }, 0] }, true, false],
+                    },
                 },
             },
             {
                 $match: {
-                    likedByCurrentUser: false, // Filter out already liked reels
+                    likedByCurrentUser: false,
                 },
             },
             {
-                $sample: { size: limit }, // Random sampling
+                $sample: { size: limit },
             },
         ]);
 
-        // Async activity logging (non-blocking)
-        ActivityLog.create({ userId, type: "Watching Reels" }).catch((err) => console.error("Activity log error:", err));
+        const unlikedCount = unlikedReels.length;
+        let reelsArr = [...unlikedReels];
 
+        // 2️⃣ If not enough, get some liked reels
+        if (unlikedCount < limit) {
+            const likedReels = await Reels.aggregate([
+                {
+                    $lookup: {
+                        from: "reellikes",
+                        let: { reelId: "$_id" },
+                        pipeline: [
+                            {
+                                $match: {
+                                    $expr: {
+                                        $and: [
+                                            { $eq: ["$reelId", "$$reelId"] },
+                                            { $eq: ["$userId", userId] },
+                                        ],
+                                    },
+                                },
+                            },
+                        ],
+                        as: "userLiked",
+                    },
+                },
+                {
+                    $addFields: {
+                        likedByCurrentUser: {
+                            $cond: [{ $gt: [{ $size: "$userLiked" }, 0] }, true, false],
+                        },
+                    },
+                },
+                {
+                    $match: {
+                        likedByCurrentUser: true,
+                    },
+                },
+                {
+                    $sample: { size: limit - unlikedCount },
+                },
+            ]);
+
+            reelsArr = [...unlikedReels, ...likedReels];
+        }
+
+        // 3️⃣ Log async activity (optional)
+        ActivityLog.create({ userId, type: "Watching Reels" }).catch((err) =>
+            console.error("Activity log error:", err)
+        );
+
+        // 4️⃣ Return response
         res.status(200).json({
             message: "Reels Found",
             data: reelsArr,

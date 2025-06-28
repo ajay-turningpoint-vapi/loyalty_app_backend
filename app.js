@@ -212,8 +212,9 @@ const findInactiveUserJob = schedule.scheduleJob("0 10 * * 1", async () => {
         await Promise.all(
             inactiveUsers.map(async (user) => {
                 try {
-                    const title = "We Miss You! Come Back and Win!";
-                    const body = `Hey there! We've noticed that you haven't been using our app lately. Don't miss out on all the amazing offers, exciting events like lucky draws, and much more! Come back now to enjoy everything we have to offer. We can't wait to see you again!`;
+                    const title = "🎉 मस्ती मिस हो रही है?";
+                    const body = "काफ़ी समय हो गया! नए रील्स, लकी ड्रॉ और बहुत कुछ आपका इंतज़ार कर रहे हैं।";
+
                     await sendNotificationMessage(user._id, title, body);
                 } catch (error) {
                     console.error("Error sending notification for user:", user._id, error);

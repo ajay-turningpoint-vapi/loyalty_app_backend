@@ -270,7 +270,7 @@ export const getReelsPaginatedworkingAWS = async (req, res, next) => {
     }
 };
 
-export const getReelsPaginatedWithOutObjecTid = async (req, res, next) => {
+export const getReelsPaginatedWithOutObjectID = async (req, res, next) => {
     try {
         if (!req.user) {
             return res.status(401).json({ message: "Unauthorized" });
@@ -332,6 +332,111 @@ export const getReelsPaginatedWithOutObjecTid = async (req, res, next) => {
     }
 };
 
+// export const getReelsPaginated = async (req, res, next) => {
+//     try {
+//         if (!req.user) {
+//             return res.status(401).json({ message: "Unauthorized" });
+//         }
+
+//         const limit = Math.max(parseInt(req.query.limit) || 10, 1);
+//         const userId = req.user.userId;
+
+//         // 1️⃣ Unliked reels (not present in reelLikes)
+//         const unlikedReels = await Reels.aggregate([
+//             {
+//                 $lookup: {
+//                     from: "reellikes",
+//                     let: { reelId: "$_id" },
+//                     pipeline: [
+//                         {
+//                             $match: {
+//                                 $expr: {
+//                                     $and: [
+//                                         { $eq: ["$reelId", "$$reelId"] },
+//                                         { $eq: ["$userId", userId] }, // userId is string
+//                                     ],
+//                                 },
+//                             },
+//                         },
+//                     ],
+//                     as: "userLiked",
+//                 },
+//             },
+//             {
+//                 $addFields: {
+//                     likedByCurrentUser: {
+//                         $cond: [{ $gt: [{ $size: "$userLiked" }, 0] }, true, false],
+//                     },
+//                 },
+//             },
+//             {
+//                 $match: {
+//                     likedByCurrentUser: false,
+//                 },
+//             },
+//             {
+//                 $sample: { size: limit },
+//             },
+//         ]);
+
+//         const unlikedCount = unlikedReels.length;
+//         let reelsArr = [...unlikedReels];
+
+//         // 2️⃣ If not enough, get some liked reels
+//         if (unlikedCount < limit) {
+//             const likedReels = await Reels.aggregate([
+//                 {
+//                     $lookup: {
+//                         from: "reellikes",
+//                         let: { reelId: "$_id" },
+//                         pipeline: [
+//                             {
+//                                 $match: {
+//                                     $expr: {
+//                                         $and: [{ $eq: ["$reelId", "$$reelId"] }, { $eq: ["$userId", userId] }],
+//                                     },
+//                                 },
+//                             },
+//                         ],
+//                         as: "userLiked",
+//                     },
+//                 },
+//                 {
+//                     $addFields: {
+//                         likedByCurrentUser: {
+//                             $cond: [{ $gt: [{ $size: "$userLiked" }, 0] }, true, false],
+//                         },
+//                     },
+//                 },
+//                 {
+//                     $match: {
+//                         likedByCurrentUser: true,
+//                     },
+//                 },
+//                 {
+//                     $sample: { size: limit - unlikedCount },
+//                 },
+//             ]);
+
+//             reelsArr = [...unlikedReels, ...likedReels];
+//         }
+
+//         // 3️⃣ Log async activity (optional)
+//         ActivityLog.create({ userId, type: "Watching Reels" }).catch((err) => console.error("Activity log error:", err));
+
+//         // 4️⃣ Return response
+//         res.status(200).json({
+//             message: "Reels Found",
+//             data: reelsArr,
+//             success: true,
+//             limit
+//         });
+//     } catch (err) {
+//         console.error("Error in getReelsPaginated:", err);
+//         next(err);
+//     }
+// };
+
 export const getReelsPaginated = async (req, res, next) => {
     try {
         if (!req.user) {
@@ -341,37 +446,15 @@ export const getReelsPaginated = async (req, res, next) => {
         const limit = Math.max(parseInt(req.query.limit) || 10, 1);
         const userId = req.user.userId;
 
-        // 1️⃣ Unliked reels (not present in reelLikes)
+        // 1️⃣ Get liked reel IDs for the current user
+        const likedReelDocs = await ReelLikes.find({ userId }, { reelId: 1 }).lean();
+        const likedReelIds = likedReelDocs.map((doc) => doc.reelId.toString());
+
+        // 2️⃣ Fetch unliked reels (limit random)
         const unlikedReels = await Reels.aggregate([
             {
-                $lookup: {
-                    from: "reellikes",
-                    let: { reelId: "$_id" },
-                    pipeline: [
-                        {
-                            $match: {
-                                $expr: {
-                                    $and: [
-                                        { $eq: ["$reelId", "$$reelId"] },
-                                        { $eq: ["$userId", userId] }, // userId is string
-                                    ],
-                                },
-                            },
-                        },
-                    ],
-                    as: "userLiked",
-                },
-            },
-            {
-                $addFields: {
-                    likedByCurrentUser: {
-                        $cond: [{ $gt: [{ $size: "$userLiked" }, 0] }, true, false],
-                    },
-                },
-            },
-            {
                 $match: {
-                    likedByCurrentUser: false,
+                    _id: { $nin: likedReelIds.map((id) => new mongoose.Types.ObjectId(id)) },
                 },
             },
             {
@@ -379,63 +462,39 @@ export const getReelsPaginated = async (req, res, next) => {
             },
         ]);
 
-        const unlikedCount = unlikedReels.length;
         let reelsArr = [...unlikedReels];
 
-        // 2️⃣ If not enough, get some liked reels
-        if (unlikedCount < limit) {
+        // 3️⃣ If not enough, fetch liked reels
+        if (reelsArr.length < limit) {
             const likedReels = await Reels.aggregate([
                 {
-                    $lookup: {
-                        from: "reellikes",
-                        let: { reelId: "$_id" },
-                        pipeline: [
-                            {
-                                $match: {
-                                    $expr: {
-                                        $and: [
-                                            { $eq: ["$reelId", "$$reelId"] },
-                                            { $eq: ["$userId", userId] },
-                                        ],
-                                    },
-                                },
-                            },
-                        ],
-                        as: "userLiked",
-                    },
-                },
-                {
-                    $addFields: {
-                        likedByCurrentUser: {
-                            $cond: [{ $gt: [{ $size: "$userLiked" }, 0] }, true, false],
-                        },
-                    },
-                },
-                {
                     $match: {
-                        likedByCurrentUser: true,
+                        _id: { $in: likedReelIds.map((id) => new mongoose.Types.ObjectId(id)) },
                     },
                 },
                 {
-                    $sample: { size: limit - unlikedCount },
+                    $sample: { size: limit - reelsArr.length },
                 },
             ]);
 
-            reelsArr = [...unlikedReels, ...likedReels];
+            reelsArr = [...reelsArr, ...likedReels];
         }
 
-        // 3️⃣ Log async activity (optional)
-        ActivityLog.create({ userId, type: "Watching Reels" }).catch((err) =>
-            console.error("Activity log error:", err)
-        );
+        // 4️⃣ Add `isLiked` field to each reel
+        const reelsWithLikedFlag = reelsArr.map((reel) => ({
+            ...reel,
+            likedByCurrentUser: likedReelIds.includes(reel._id.toString()),
+        }));
 
-        // 4️⃣ Return response
+        // 5️⃣ Optional: Log activity (non-blocking)
+        ActivityLog.create({ userId, type: "Watching Reels" }).catch((err) => console.error("Activity log error:", err));
+
+        // 6️⃣ Send response
         res.status(200).json({
             message: "Reels Found",
-            data: reelsArr,
+            data: reelsWithLikedFlag,
             success: true,
             limit,
-            hasMore: reelsArr.length === limit,
         });
     } catch (err) {
         console.error("Error in getReelsPaginated:", err);

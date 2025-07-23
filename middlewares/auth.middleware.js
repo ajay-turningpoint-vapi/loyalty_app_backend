@@ -1,8 +1,9 @@
 import jwt from "jsonwebtoken";
 import User from "../models/user.model";
 import Token from "../models/token.model";
+import rateLimit from "express-rate-limit";
 
-export const authorizeJwt = async (req, res, next) => {
+export const authorizeJwtold = async (req, res, next) => {
     const authorization = req.headers["authorization"];
     const token = authorization?.split("Bearer ")[1];
 
@@ -46,6 +47,41 @@ export const authorizeJwt = async (req, res, next) => {
     }
 };
 
+export const authorizeJwt = async (req, res, next) => {
+    const authorization = req.headers["authorization"];
+    const token = authorization?.split("Bearer ")[1];
+
+    if (!token) {
+        return res.status(401).json({ message: "Access denied. No token provided.", valid: false });
+    }
+
+    try {
+        const decoded = jwt.verify(token, process.env.JWT_ACCESS_TOKEN_SECRET);
+        req.user = decoded;
+
+        const storedToken = await Token.findOne({ uid: decoded.uid, token });
+        if (!storedToken) {
+            return res.status(401).json({ message: "Token not found in DB.", valid: false });
+        }
+
+        const userObj = await User.findById(decoded.userId).exec();
+        req.user.userObj = userObj;
+
+        next();
+    } catch (err) {
+        console.log("JWT verification failed:", err?.message || err);
+        try {
+            const payload = jwt.decode(token);
+            if (payload?.uid) {
+                await Token.deleteOne({ uid: payload.uid, token });
+            }
+        } catch (decodeErr) {
+            console.log("Failed to decode token for cleanup:", decodeErr?.message || decodeErr);
+        }
+        return res.status(401).json({ message: "Invalid or expired token.", valid: false });
+    }
+};
+
 export const setUserAndUserObj = async (req, res, next) => {
     let authorization = req.headers["authorization"];
     if (authorization) {
@@ -64,3 +100,15 @@ export const setUserAndUserObj = async (req, res, next) => {
     }
     next();
 };
+
+export const limiter = rateLimit({
+    keyGenerator: (req) => req.user?.userId || req.ip,
+    windowMs: 60 * 60 * 1000, // 1 hour
+    max: 100, // 200 requests per hour per user or IP
+    standardHeaders: true, 
+    legacyHeaders: false,
+    message: {
+        status: 429,
+        error: "Too many requests. Please try again after an hour.",
+    },
+});

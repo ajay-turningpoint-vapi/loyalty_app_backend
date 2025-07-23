@@ -29,11 +29,13 @@ import {
     createPointHistoryforContractor,
     fixCouponsUpdatedAt,
     getMatchingLogsForCoupons,
+    getCouponScanAnalytics,
+    userScanCount,
 } from "../controllers/coupons.controller";
-import { authorizeJwt } from "../middlewares/auth.middleware";
+import { authorizeJwt, limiter } from "../middlewares/auth.middleware";
 
 let router = express.Router();
-
+// router.use(limiter);
 router.post("/addCoupon", addCoupons);
 router.get("/getCoupons", getAllCoupons);
 
@@ -66,4 +68,5 @@ router.get("/exportCouponReport", getExcelReportOfCoupons);
 router.post('/fix-coupons-updated-at', fixCouponsUpdatedAt);
 router.get('/fix-coupon-matches', getMatchingLogsForCoupons);
 
+router.get('/userScanCount', userScanCount);
 export default router;

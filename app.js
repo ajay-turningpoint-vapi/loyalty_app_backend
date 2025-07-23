@@ -36,14 +36,11 @@ import gameRoutes from "./routes/game.routes";
 import statsRoutes from "./routes/stats.routes";
 import scoreRoutes from "./routes/score.routes";
 import leaderboardRoutes from "./routes/leaderboard.routes";
+import jobRoutes from "./routes/job.routes";
 import helmet from "helmet";
 import { format } from "date-fns";
 const schedule = require("node-schedule");
-const { exec } = require("child_process");
-const client = require("prom-client");
-const promBundle = require("express-prom-bundle");
-// import { httpRequestDuration, httpRequestsTotal, register,winstonLogger} from "./services/metricsService";
-//routes
+
 import usersRouter from "./routes/users.routes";
 import wishlist from "./routes/wishlist.routes";
 import { checkContest, checkContestWinners } from "./Services/ContestCron";
@@ -51,30 +48,14 @@ import fileRouter from "./routes/fileRouter.routes";
 import activityLogsModel from "./models/activityLogs.model";
 import userModel from "./models/user.model";
 import { sendNotificationMessage } from "./middlewares/fcm.middleware";
-import whatsappRoutes from "./routes/whatsapp.routes";
-import { initializeWhatsAppClient } from "./Services/whatsappClient";
+import { limiter } from "./middlewares/auth.middleware";
 const restrictionRoutes = require("./routes/restrictionRoutes");
 
-const fs = require("fs");
 const app = express();
 app.use(helmet());
 app.use(cors());
 app.use(compression());
 
-// const promMiddleware = promBundle({
-//     includeMethod: true,
-//     includePath: true,
-//     promClient: { register },
-//     // Additional options for production can be added here
-// });
-
-// // Use the metrics middleware globally
-// app.use(promMiddleware);
-const dumpFolder = path.join(__dirname, "dump");
-
-if (!fs.existsSync(dumpFolder)) {
-    fs.mkdirSync(dumpFolder);
-}
 mongoose.connect(CONFIG.MONGOURI, { useNewUrlParser: true, useUnifiedTopology: true }, (err) => {
     if (err) {
     } else {
@@ -82,36 +63,12 @@ mongoose.connect(CONFIG.MONGOURI, { useNewUrlParser: true, useUnifiedTopology: t
     }
 });
 app.use(logger("dev"));
-app.use(express.json({ limit: "100mb" })); // parses the incoming json requests
+
+app.use(express.json({ limit: "100mb" })); 
 app.use(express.urlencoded({ extended: false, limit: "100mb", parameterLimit: 10000000 }));
 app.use(cookieParser());
 app.use(express.static(path.join(__dirname, "public")));
 app.use("/", indexRouter);
-
-// app.use((req, res, next) => {
-//     const start = Date.now();
-
-//     res.on("finish", () => {
-//         const duration = (Date.now() - start) / 1000; // Convert ms to seconds
-//         httpRequestDuration.labels(req.method, req.path, res.statusCode).observe(duration);
-//         httpRequestsTotal.labels(req.method, req.path, res.statusCode).inc();
-
-//         winstonLogger.info(`[${req.method}] ${req.path} - ${res.statusCode} - ${duration}s`);
-//     });
-
-//     res.on("error", (err) => {
-//         httpRequestErrors.labels(req.method, req.path, res.statusCode || 500).inc();
-//         winstonLogger.error(`Error in request: ${req.method} ${req.path} - ${err.message}`);
-//     });
-
-//     next();
-// });
-
-// app.get("/metrics", async (req, res) => {
-//     res.set("Content-Type", register.contentType);
-//     res.end(await register.metrics());
-// });
-
 app.use("/users", usersRouter);
 app.use("/category", category);
 app.use("/product", product);
@@ -135,7 +92,6 @@ app.use("/email", emailRouter);
 app.use("/map", geofenceRouter);
 app.use("/logs", activityLogsRouter);
 app.use("/newContractor", newContractorRouter);
-// app.use("/whatsapp", whatsappRoutes);
 app.use("/promotions", promotionRoutes);
 app.use("/ticket", ticketRoutes);
 app.use("/notes", noteRoutes);
@@ -144,25 +100,8 @@ app.use("/games", gameRoutes);
 app.use("/stats", statsRoutes);
 app.use("/scores", scoreRoutes);
 app.use("/leaderboard", leaderboardRoutes);
+app.use('/jobs', jobRoutes);
 app.use("/", fileRouter);
-
-app.get("/backup", async (req, res) => {
-    try {
-        // Perform backup operation using mongodump
-        exec(`mongodump --db TurningPoint --out ${dumpFolder}`, (error, stdout, stderr) => {
-            if (error) {
-                console.error("Backup error:", error);
-                return res.status(500).json({ error: "Backup failed" });
-            }
-
-            console.error(stderr);
-            res.json({ message: "Backup successful" });
-        });
-    } catch (error) {
-        console.error("Backup error:", error);
-        res.status(500).json({ error: "Internal server error" });
-    }
-});
 
 const job = schedule.scheduleJob("*/30 * * * * *", function () {
     let date = format(new Date(), "yyyy-MM-dd");

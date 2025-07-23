@@ -15,7 +15,7 @@ import ReelLikes from "../models/reelLikes.model";
 import Token from "../models/token.model";
 import { MongoServerError } from "mongodb";
 import { createPointlogs } from "./pointHistory.controller";
-import ReferralRewards from "../models/referralRewards.model";
+
 import { sendNotificationMessage } from "../middlewares/fcm.middleware";
 import Geofence from "../models/geoFence.modal";
 import { format } from "date-fns";
@@ -36,6 +36,10 @@ import reelLikesModel from "../models/reelLikes.model";
 import userModel from "../models/user.model";
 import { image } from "qr-image";
 import { is } from "date-fns/locale";
+import dayjs from "dayjs";
+import isoWeek from "dayjs/plugin/isoWeek";
+import moment from "moment";
+dayjs.extend(isoWeek);
 // import { httpRequestDuration, httpRequestErrors, httpRequestsTotal } from "../services/metricsService";
 
 const geolib = require("geolib");
@@ -168,59 +172,6 @@ export const googleLogin = async (req, res) => {
             console.error("Failed to decode UID during token cleanup:", decodeErr.message);
         }
         // res.status(statusCode).json({ error: errorMessage, status: false });
-    }
-};
-
-export const refreshToken = async (req, res) => {
-    const { refreshToken } = req.body;
-
-    if (!refreshToken) {
-        return res.status(400).json({ message: "Refresh token is required", status: false });
-    }
-
-    try {
-        // Verify the refresh token
-        const decoded = jwt.verify(refreshToken, CONFIG.JWT_REFERSH_TOKEN_SECRET);
-        const { userId } = decoded;
-        const userIdObjectId = mongoose.Types.ObjectId(userId);
-
-        // Check if the refresh token exists in the database
-        const storedToken = await Token.findOne({ userId: userIdObjectId }).exec();
-        if (!storedToken || storedToken.token !== refreshToken) {
-            return res.status(401).json({ message: "Invalid or expired refresh token", status: false });
-        }
-
-        // Generate a new access token
-        const accessToken = await generateAccessJwt({
-            userId: decoded.userId,
-            role: decoded.role,
-            uid: decoded.uid,
-            fcmToken: decoded.fcmToken,
-        });
-
-        await Token.findOneAndUpdate({ userId }, { token: accessToken }, { new: true }).exec();
-
-        // Respond with the new access token
-        res.status(200).json({
-            message: "Token refreshed successfully",
-            status: true,
-            token: accessToken,
-        });
-    } catch (error) {
-        console.error("Error during token refresh:", error);
-
-        let statusCode = 500;
-        let errorMessage = "Internal Server Error";
-
-        if (error.name === "JsonWebTokenError") {
-            statusCode = 401;
-            errorMessage = "Unauthorized. Invalid refresh token.";
-        } else if (error.name === "TokenExpiredError") {
-            statusCode = 401;
-            errorMessage = "Unauthorized. Refresh token has expired.";
-        }
-
-        res.status(statusCode).json({ error: errorMessage, status: false });
     }
 };
 
@@ -412,138 +363,6 @@ export const updateWinnersBlockStatus = async (req, res) => {
     }
 };
 
-export const updateBlocklowentries = async (req, res) => {
-    try {
-        // Step 1: Aggregate to find users with less than 3 contest entries
-        const usersWithLowEntries = await UserContest.aggregate([
-            {
-                $group: {
-                    _id: "$userId",
-                    entryCount: { $sum: 1 },
-                },
-            },
-            {
-                $match: { entryCount: { $lt: 3 } }, // Users with less than 3 entries
-            },
-            {
-                $project: { userId: "$_id", _id: 0 },
-            },
-        ]);
-
-        const userIdsToBlock = usersWithLowEntries.map((user) => user.userId);
-
-        if (userIdsToBlock.length === 0) {
-            return res.status(200).json({ message: "No users found with less than 3 entries." });
-        }
-
-        // Step 2: Update isBlocked status in User collection
-        const result = await Users.updateMany({ _id: { $in: userIdsToBlock } }, { $set: { isBlocked: true } });
-
-        res.status(200).json({
-            message: "Users with less than 3 contest entries have been blocked.",
-            blockedUsersCount: result.modifiedCount,
-            blockedUserIds: userIdsToBlock,
-        });
-    } catch (error) {
-        console.error("Error blocking users:", error);
-        res.status(500).json({ message: "Internal server error." });
-    }
-};
-
-export const updateAllUsersKycStatus = async (req, res) => {
-    try {
-        // Update all users' kycStatus to "pending"
-        const result = await Users.updateMany({}, { $set: { kycStatus: "pending" } });
-
-        res.status(200).json({
-            message: "All users' kycStatus has been updated to 'pending'.",
-            updatedUsersCount: result.modifiedCount,
-        });
-    } catch (error) {
-        console.error("Error updating KYC status for all users:", error);
-        res.status(500).json({ message: "Internal server error." });
-    }
-};
-
-export const applyRewards = async (req, res, next) => {
-    try {
-        let findArr = [];
-
-        if (mongoose.isValidObjectId(req.params.id)) {
-            findArr = [{ _id: req.params.id }, { name: req.params.id }];
-        } else {
-            findArr = [{ name: req.params.id }];
-        }
-        let RewardObj = await ReferralRewards.findOne({ $or: [...findArr] })
-            .lean()
-            .exec();
-        let UserObj = await Users.findById(req.user.userId).lean().exec();
-        if (!RewardObj) {
-            throw new Error("Reward not found");
-        }
-
-        if (RewardObj.maximumNoOfUsersAllowed !== 1) {
-            throw new Error("Reward is already applied");
-        }
-        await ReferralRewards.findByIdAndUpdate(RewardObj._id, { maximumNoOfUsersAllowed: 0 }).exec();
-        let points = RewardObj.value;
-
-        if (RewardObj.value !== 0) {
-            let pointDescription = "Referral Reward Bouns " + points + " Points";
-            await createPointlogs(req.user.userId, points, pointTransactionType.CREDIT, pointDescription, "Referral", "success");
-            let userPoints = {
-                points: UserObj.points + parseInt(points),
-            };
-
-            await Users.findByIdAndUpdate(req.user.userId, userPoints).exec();
-
-            res.status(200).json({ message: "Reward Applied", success: true, points: RewardObj.value });
-        } else {
-            res.status(200).json({ message: "Better luck next time", success: true, points: RewardObj.value });
-        }
-    } catch (err) {
-        console.error(err);
-        next(err);
-    }
-};
-
-export const getUserReferralsReportByIdScratchCard = async (req, res, next) => {
-    try {
-        const userId = req.params.id;
-        const user = await Users.findById(userId).populate("referrals", "name").populate("referralRewards");
-
-        if (!user) {
-            return res.status(404).json({ message: "User not found" });
-        }
-
-        const totalReferrals = user.referrals.length;
-        const appliedRewards = user.referralRewards.filter((reward) => reward.maximumNoOfUsersAllowed === 0);
-        const pendingRewards = user.referralRewards.filter((reward) => reward.maximumNoOfUsersAllowed === 1);
-        let totalRewardPointsEarned = 0;
-        appliedRewards.forEach((reward) => {
-            totalRewardPointsEarned += reward.value;
-        });
-
-        res.json({
-            user: {
-                _id: user._id,
-                name: user.name,
-                email: user.email,
-                phone: user.phone,
-                referrals: user.referrals,
-                referralRewards: user.referralRewards,
-                appliedRewards: appliedRewards,
-                pendingRewards: pendingRewards, // Include pending rewards array in the response
-                totalReferrals: totalReferrals,
-                totalRewardPointsEarned: totalRewardPointsEarned,
-            },
-        });
-    } catch (error) {
-        console.error(error);
-        res.status(500).json({ error: "Server error" });
-    }
-};
-
 export const getUserReferralsReportById = async (req, res, next) => {
     try {
         const userId = req.params.id;
@@ -695,57 +514,6 @@ export const login = async (req, res, next) => {
     }
 };
 
-// Function to calculate distance between user's coordinates and geofence coordinates
-const calculateDistance = (userCoordinates, geofenceCoordinates) => {
-    return geolib.getDistance({ latitude: userCoordinates[0], longitude: userCoordinates[1] }, { latitude: geofenceCoordinates[1], longitude: geofenceCoordinates[0] });
-};
-
-// Controller function for updating user's location and sending notifications to users within geofences
-export const location = async (req, res) => {
-    const { coordinates } = req.body; // Extract coordinates from the request body
-    try {
-        const userId = req.user.userId; // Extract user ID from authenticated user
-        const user = await Users.findById(userId); // Find user by ID in the database
-        // Check if user exists
-        if (!user) {
-            return res.status(404).json({ message: "User not found" });
-        }
-
-        user.location.coordinates = coordinates;
-        await user.save();
-
-        // Find all geofences
-        const allGeofences = await Geofence.find({});
-        for (const geofence of allGeofences) {
-            // Calculate distance between user's coordinates and geofence coordinates
-            const distance = calculateDistance(coordinates, geofence.location.coordinates);
-            if (distance <= geofence.radius) {
-                const swappedCoordinates = [geofence.location.coordinates[1], geofence.location.coordinates[0]];
-
-                const usersToNotify = await Users.find({
-                    location: {
-                        $geoWithin: {
-                            $centerSphere: [swappedCoordinates, geofence.radius / 6371], // Convert radius to radians
-                        },
-                    },
-                });
-
-                // for (const user of usersToNotify) {
-                //     const name = "Turning Point";
-                //     await sendNotification(user.fcmToken, name, geofence.notificationMessage);
-                // }
-            } else {
-                console.log("Outside geofence radius");
-            }
-        }
-
-        res.status(200).json({ message: "Location updated and notifications sent" });
-    } catch (error) {
-        console.error("Error handling location update:", error);
-        res.status(500).json({ message: "Internal server error" });
-    }
-};
-
 export const notListedContractors = async (req, res) => {
     try {
         const users = await Users.find(
@@ -771,62 +539,6 @@ export const notListedContractors = async (req, res) => {
     }
 };
 
-export const addGeoFence = async (req, res) => {
-    try {
-        // Extract data from the request body
-        const { name, latitude, longitude, radius, notificationMessage } = req.body;
-
-        // Create a new geofence object
-        const newGeofence = new Geofence({
-            name: name,
-            location: {
-                type: "Point",
-                coordinates: [longitude, latitude],
-            },
-            radius: radius,
-            notificationMessage: notificationMessage,
-        });
-
-        // Save the new geofence to the database
-        const savedGeofence = await newGeofence.save();
-        // Respond with the saved geofence object
-        res.status(201).json({ message: "Added New GeoFence", data: savedGeofence, success: true });
-    } catch (err) {
-        console.error(err);
-        res.status(500).json({ error: "Internal server error" });
-    }
-};
-
-// Assuming you have imported the Geofence model at the top of your file
-
-// Define a route to handle DELETE requests to delete a geofence by its ID
-export const deletedGeofence = async (req, res) => {
-    try {
-        const geofenceId = req.params.id;
-        const deletedGeofence = await Geofence.findByIdAndDelete(geofenceId);
-        if (!deletedGeofence) {
-            return res.status(404).json({ error: "Geofence not found" });
-        }
-        res.json({ message: "Geofence deleted successfully", data: deletedGeofence });
-    } catch (err) {
-        console.error("Error deleting geofence:", err);
-        res.status(500).json({ error: "Internal server error" });
-    }
-};
-
-export const getAllGeofence = async (req, res) => {
-    try {
-        const geofences = await Geofence.find();
-        if (geofences.length === 0) {
-            return res.status(404).json({ message: "No geofences found" });
-        }
-        res.status(201).json({ message: "All GeoFence Found", data: geofences, success: true });
-    } catch (err) {
-        console.error(err);
-        res.status(500).json({ error: "Internal server error" });
-    }
-};
-
 export const updateUserProfile = async (req, res, next) => {
     try {
         let userObj = await Users.findById(req.user.userId).exec();
@@ -844,27 +556,10 @@ export const updateUserProfile = async (req, res, next) => {
             req.body.isActive = false;
         }
 
-        if (req.body.bankDetails && req.body.bankDetails.length > 0) {
-            let bankDetails = [
-                {
-                    banktype: req.body.bankDetails[0].banktype,
-                    accountName: req.body.bankDetails[0].accountName,
-                    accountNo: req.body.bankDetails[0].accountNo,
-                    ifsc: req.body.bankDetails[0].ifsc,
-                    // bank: req.body.bankDetails[0].bank,
-                },
-            ];
-            req.body.bankDetails = bankDetails;
-            sendWhatsAppMessage("userkyc", "918975944936", userObj.name, userObj.phone, userObj.email);
-        }
-
         userObj = await Users.findByIdAndUpdate(req.user.userId, req.body, { new: true }).exec();
         res.status(200).json({ message: "Profile Updated Successfully", data: userObj, success: true });
     } catch (err) {
-        if (err instanceof MongoServerError && err.code === 11000) {
-            return res.status(400).json({ message: "Email Already Exists", success: false });
-        }
-        next(err);
+        console.log("update user profile error", err);
     }
 };
 
@@ -938,7 +633,7 @@ export const updateUserProfileAdmin = async (req, res, next) => {
             updateData.kycStatus = kycStatus;
             if (kycStatus === "approved") {
                 updateData.isActive = true;
-                updateData.isActiveDate = new Date();
+                updateData.kycApprovedDate = new Date();
 
                 await sendNotificationMessage(userId, "🎉 बधाई हो! आपकी KYC मंज़ूर हो गई!", "👏 आपकी KYC मंज़ूर! अब मज़ेदार इनाम पाएं!", "kyc");
             } else if (kycStatus === "rejected") {
@@ -1122,70 +817,6 @@ export const updateUserStatus = async (req, res, next) => {
     }
 };
 
-export const updateUserKycStatus = async (req, res, next) => {
-    try {
-        const userId = req.params.id;
-        const { kycStatus } = req.body;
-
-        // Find the user
-        const userObj = await Users.findById(userId).exec();
-        if (!userObj) {
-            return res.status(404).json({ message: "User not found", success: false });
-        }
-
-        // Prepare update object
-        let updateData = { kycStatus };
-
-        // If KYC is approved, set isActive to true and update isActiveDate
-        if (kycStatus === "approved") {
-            updateData.isActive = true;
-            updateData.isActiveDate = new Date();
-        }
-
-        // Update the user with new KYC status (and isActive if applicable)
-        await Users.findByIdAndUpdate(userId, updateData).exec();
-
-        // Send response
-        res.status(200).json({ message: "User KYC Status Updated Successfully", success: true });
-
-        // Send notifications based on KYC status
-        if (kycStatus === "approved") {
-            const title = "🎉 बधाई हो! आपकी KYC मंज़ूर हो गई!";
-            const body = "👏 आपकी KYC मंज़ूर! अब मज़ेदार इनाम पाएं!";
-            await sendNotificationMessage(userId, title, body, "kyc");
-        } else if (kycStatus === "rejected") {
-            const title = "🚫 KYC सबमिशन अस्वीकृत";
-            const body = "😔 KYC अस्वीकृत! कृपया फिर से सबमिट करें।";
-            await sendNotificationMessage(userId, title, body, "kyc");
-        }
-
-        next();
-    } catch (err) {
-        console.error(err);
-        res.status(500).json({ message: "Internal Server Error", success: false });
-    }
-};
-
-export const bulkActivateAllUsers = async (req, res) => {
-    try {
-        // Find all users who are not yet active
-        const users = await Users.find({ isActive: { $ne: true } })
-            .lean()
-            .exec();
-
-        if (!users.length) {
-            return res.status(404).json({ message: "No inactive users found to update", success: false });
-        }
-
-        // Bulk update isActive to true
-        await Users.updateMany({}, { $set: { isActive: true } }).exec();
-        res.status(200).json({ message: "All users activated successfully", success: true });
-    } catch (error) {
-        console.error("Error updating user status:", error);
-        res.status(500).json({ message: "Internal Server Error", success: false });
-    }
-};
-
 const updateUserOnlineStatusWithRetry = async (userId, isOnline, retries = 3) => {
     let attempt = 0;
     while (attempt < retries) {
@@ -1229,7 +860,7 @@ export const updateUserOnlineStatus = async (req, res) => {
     }
 };
 
-export const getUsersAnalytics = async (req, res, next) => {
+export const getUsersAnalyticsworking = async (req, res, next) => {
     try {
         // Aggregate the createdAt dates based on month
         const userGroups = await Users.aggregate([
@@ -1260,6 +891,430 @@ export const getUsersAnalytics = async (req, res, next) => {
         });
 
         res.status(200).json({ message: "Counts of users grouped by month (excluding ADMINs and Contractors)", data: userCounts, success: true });
+    } catch (error) {
+        console.error(error);
+        next(error);
+    }
+};
+
+export const getUsersAnalyticstest = async (req, res, next) => {
+    try {
+        const { level = "month", month, week } = req.query;
+
+        const matchStage = {
+            role: { $ne: "ADMIN" },
+            name: { $ne: "Contractor" },
+        };
+
+        // Monthly Aggregation
+        if (level === "month") {
+            const result = await Users.aggregate([
+                { $match: matchStage },
+                {
+                    $group: {
+                        _id: { $month: "$createdAt" },
+                        count: { $sum: 1 },
+                    },
+                },
+                { $sort: { _id: 1 } },
+            ]);
+
+            const monthCounts = Array.from({ length: 12 }, (_, i) => {
+                const found = result.find((r) => r._id === i + 1);
+                return {
+                    label: moment().month(i).format("MMMM"),
+                    value: found ? found.count : 0,
+                };
+            });
+
+            return res.status(200).json({
+                message: "Monthly user analytics",
+                data: monthCounts,
+                success: true,
+            });
+        }
+
+        // Weekly Aggregation for a Given Month
+        if (level === "week" && month) {
+            const monthIndex = moment().month(month).month(); // 0-based index
+            const startOfMonth = moment().month(monthIndex).startOf("month").toDate();
+            const endOfMonth = moment().month(monthIndex).endOf("month").toDate();
+
+            const result = await Users.aggregate([
+                {
+                    $match: {
+                        ...matchStage,
+                        createdAt: { $gte: startOfMonth, $lte: endOfMonth },
+                    },
+                },
+                {
+                    $addFields: {
+                        isoWeek: { $isoWeek: "$createdAt" },
+                    },
+                },
+                {
+                    $group: {
+                        _id: "$isoWeek",
+                        count: { $sum: 1 },
+                    },
+                },
+                { $sort: { _id: 1 } },
+            ]);
+
+            const weekly = result.map((r, i) => ({
+                label: `Week ${i + 1}`,
+                value: r.count,
+                isoWeek: r._id,
+            }));
+
+            return res.status(200).json({
+                message: `Weekly user analytics for ${month}`,
+                data: weekly,
+                success: true,
+            });
+        }
+
+        // Daily Aggregation for Given Month & Week
+        if (level === "day" && month && week) {
+            const monthIndex = moment().month(month).month(); // 0-based
+            const startOfMonth = moment().month(monthIndex).startOf("month");
+            const endOfMonth = moment().month(monthIndex).endOf("month");
+
+            const targetWeekNumber = parseInt(week.replace("Week ", ""));
+
+            const startOfWeek = moment(startOfMonth).isoWeek(targetWeekNumber).startOf("isoWeek").toDate();
+            const endOfWeek = moment(startOfMonth).isoWeek(targetWeekNumber).endOf("isoWeek").toDate();
+
+            const result = await Users.aggregate([
+                {
+                    $match: {
+                        ...matchStage,
+                        createdAt: { $gte: startOfWeek, $lte: endOfWeek },
+                    },
+                },
+                {
+                    $group: {
+                        _id: {
+                            $dateToString: { format: "%Y-%m-%d", date: "$createdAt" },
+                        },
+                        count: { $sum: 1 },
+                    },
+                },
+                { $sort: { _id: 1 } },
+            ]);
+
+            const daily = result.map((r) => ({
+                label: moment(r._id).format("MMM D"),
+                value: r.count,
+                date: r._id,
+            }));
+
+            return res.status(200).json({
+                message: `Daily user analytics for ${week} of ${month}`,
+                data: daily,
+                success: true,
+            });
+        }
+
+        return res.status(400).json({ message: "Invalid parameters", success: false });
+    } catch (error) {
+        console.error(error);
+        next(error);
+    }
+};
+
+export const getUsersAnalytics = async (req, res, next) => {
+    try {
+        const level = req.query.level || "month"; // "month", "week", "day"
+        const month = req.query.month; // e.g., "May"
+        const isoWeek = parseInt(req.query.week); // e.g., 18
+
+        if (level === "month") {
+            const userGroups = await Users.aggregate([
+                {
+                    $match: {
+                        role: { $ne: "ADMIN" },
+                        name: { $ne: "Contractor" },
+                    },
+                },
+                {
+                    $group: {
+                        _id: { $month: "$createdAt" },
+                        count: { $sum: 1 },
+                    },
+                },
+            ]);
+
+            const monthNames = moment.monthsShort();
+
+            const result = monthNames.map((name, i) => {
+                const match = userGroups.find((g) => g._id === i + 1);
+                return {
+                    label: name,
+                    value: match ? match.count : 0,
+                };
+            });
+
+            return res.status(200).json({
+                message: "Monthly user analytics",
+                data: result,
+                success: true,
+            });
+        }
+
+        if (level === "week" && month) {
+            const monthIndex = moment().month(month).month(); // "May" → 4 (zero-based)
+            const startOfMonth = moment().month(monthIndex).startOf("month");
+            const endOfMonth = moment().month(monthIndex).endOf("month");
+
+            const userGroups = await Users.aggregate([
+                {
+                    $match: {
+                        createdAt: {
+                            $gte: startOfMonth.toDate(),
+                            $lte: endOfMonth.toDate(),
+                        },
+                        role: { $ne: "ADMIN" },
+                        name: { $ne: "Contractor" },
+                    },
+                },
+                {
+                    $addFields: {
+                        isoWeek: { $isoWeek: "$createdAt" },
+                    },
+                },
+                {
+                    $group: {
+                        _id: "$isoWeek",
+                        count: { $sum: 1 },
+                    },
+                },
+                {
+                    $sort: { _id: 1 },
+                },
+            ]);
+
+            const data = userGroups.map((g, i) => ({
+                label: `Week ${i + 1}`,
+                value: g.count,
+                isoWeek: g._id,
+            }));
+
+            return res.status(200).json({
+                message: `Weekly user analytics for ${month}`,
+                data,
+                success: true,
+            });
+        }
+
+        if (level === "day" && month && isoWeek) {
+            const monthIndex = moment().month(month).month(); // e.g., "May" → 4
+            const monthStart = moment().month(monthIndex).startOf("month");
+            const monthEnd = moment().month(monthIndex).endOf("month");
+
+            let startOfWeek = moment().isoWeek(isoWeek).startOf("isoWeek");
+            let endOfWeek = moment().isoWeek(isoWeek).endOf("isoWeek");
+
+            if (startOfWeek.isBefore(monthStart)) {
+                startOfWeek = monthStart;
+            }
+            if (endOfWeek.isAfter(monthEnd)) {
+                endOfWeek = monthEnd;
+            }
+
+            const userGroups = await Users.aggregate([
+                {
+                    $match: {
+                        createdAt: {
+                            $gte: startOfWeek.toDate(),
+                            $lte: endOfWeek.toDate(),
+                        },
+                        role: { $ne: "ADMIN" },
+                        name: { $ne: "Contractor" },
+                    },
+                },
+                {
+                    $group: {
+                        _id: {
+                            $dateToString: { format: "%Y-%m-%d", date: "$createdAt" },
+                        },
+                        count: { $sum: 1 },
+                    },
+                },
+                {
+                    $sort: { _id: 1 },
+                },
+            ]);
+
+            const data = userGroups.map((g) => ({
+                label: moment(g._id).format("MMM D"),
+                value: g.count,
+                date: g._id,
+            }));
+
+            return res.status(200).json({
+                message: `Daily user analytics for Week ${isoWeek} of ${month}`,
+                data,
+                success: true,
+            });
+        }
+
+        return res.status(400).json({
+            message: "Invalid query parameters",
+            success: false,
+        });
+    } catch (error) {
+        console.error(error);
+        next(error);
+    }
+};
+
+export const getUsersKycAnalytics = async (req, res, next) => {
+    try {
+        const level = req.query.level || "month";
+        const month = req.query.month;
+        const isoWeek = parseInt(req.query.week);
+
+        if (level === "month") {
+            const kycGroups = await Users.aggregate([
+                {
+                    $match: {
+                        role: { $ne: "ADMIN" },
+                        name: { $ne: "Contractor" },
+                        kycStatus: "approved",
+                    },
+                },
+                {
+                    $group: {
+                        _id: { $month: "$kycApprovedDate" },
+                        count: { $sum: 1 },
+                    },
+                },
+            ]);
+
+            const monthNames = moment.monthsShort();
+
+            const result = monthNames.map((name, i) => {
+                const match = kycGroups.find((g) => g._id === i + 1);
+                return {
+                    label: name,
+                    value: match ? match.count : 0,
+                };
+            });
+
+            return res.status(200).json({
+                message: "Monthly KYC-approved user analytics",
+                data: result,
+                success: true,
+            });
+        }
+
+        if (level === "week" && month) {
+            const monthIndex = moment().month(month).month();
+            const startOfMonth = moment().month(monthIndex).startOf("month");
+            const endOfMonth = moment().month(monthIndex).endOf("month");
+
+            const kycGroups = await Users.aggregate([
+                {
+                    $match: {
+                        kycStatus: "approved",
+                        kycApprovedDate: {
+                            $gte: startOfMonth.toDate(),
+                            $lte: endOfMonth.toDate(),
+                        },
+                        role: { $ne: "ADMIN" },
+                        name: { $ne: "Contractor" },
+                    },
+                },
+                {
+                    $addFields: {
+                        isoWeek: { $isoWeek: "$kycApprovedDate" },
+                    },
+                },
+                {
+                    $group: {
+                        _id: "$isoWeek",
+                        count: { $sum: 1 },
+                    },
+                },
+                {
+                    $sort: { _id: 1 },
+                },
+            ]);
+
+            const data = kycGroups.map((g, i) => ({
+                label: `Week ${i + 1}`,
+                value: g.count,
+                isoWeek: g._id,
+            }));
+
+            return res.status(200).json({
+                message: `Weekly KYC analytics for ${month}`,
+                data,
+                success: true,
+            });
+        }
+
+        if (level === "day" && month && isoWeek) {
+            const monthIndex = moment().month(month).month();
+            const monthStart = moment().month(monthIndex).startOf("month");
+            const monthEnd = moment().month(monthIndex).endOf("month");
+
+            let startOfWeek = moment().isoWeek(isoWeek).startOf("isoWeek");
+            let endOfWeek = moment().isoWeek(isoWeek).endOf("isoWeek");
+
+            if (startOfWeek.isBefore(monthStart)) {
+                startOfWeek = monthStart;
+            }
+            if (endOfWeek.isAfter(monthEnd)) {
+                endOfWeek = monthEnd;
+            }
+
+            const kycGroups = await Users.aggregate([
+                {
+                    $match: {
+                        kycStatus: "approved",
+                        kycApprovedDate: {
+                            $gte: startOfWeek.toDate(),
+                            $lte: endOfWeek.toDate(),
+                        },
+                        role: { $ne: "ADMIN" },
+                        name: { $ne: "Contractor" },
+                    },
+                },
+                {
+                    $group: {
+                        _id: {
+                            $dateToString: {
+                                format: "%Y-%m-%d",
+                                date: "$kycApprovedDate",
+                            },
+                        },
+                        count: { $sum: 1 },
+                    },
+                },
+                {
+                    $sort: { _id: 1 },
+                },
+            ]);
+
+            const data = kycGroups.map((g) => ({
+                label: moment(g._id).format("MMM D"),
+                value: g.count,
+                date: g._id,
+            }));
+
+            return res.status(200).json({
+                message: `Daily KYC analytics for Week ${isoWeek} of ${month}`,
+                data,
+                success: true,
+            });
+        }
+
+        return res.status(400).json({
+            message: "Invalid query parameters",
+            success: false,
+        });
     } catch (error) {
         console.error(error);
         next(error);
@@ -1430,7 +1485,7 @@ export const getUserActivityAnalysis = async (req, res, next) => {
         let users = await Users.find(
             {
                 name: { $ne: "Contractor" },
-                role: { $ne: "ADMIN" },
+                role: { $nin: ["ADMIN", "SUPERADMIN"] },
                 createdAt: { $gte: startDateParsed, $lte: endDateParsed },
                 ...searchFilter,
             },
@@ -2054,30 +2109,6 @@ export const registerAdmin = async (req, res, next) => {
         next(error);
     }
 };
-// export const loginAdmin = async (req, res, next) => {
-//     try {
-//         const adminObj = await Users.findOne({ $or: [{ email: new RegExp(`^${req.body.email}$`) }, { phone: req.body.phone }], role: rolesObj.ADMIN })
-//             .lean()
-//             .exec();
-
-//         if (adminObj) {
-//             const passwordCheck = await comparePassword(adminObj.password, req.body.password);
-//             if (passwordCheck) {
-//                 let accessToken = await generateAccessJwt({ userId: adminObj._id, role: rolesObj.ADMIN, user: { name: adminObj.name, email: adminObj.email, phone: adminObj.phone, _id: adminObj._id, role: rolesObj.ADMIN } });
-//                 // let refreshToken = await generateRefreshJwt({ userId: adminObj._id, role: rolesObj.ADMIN, user: { name: adminObj.name, email: adminObj.email, phone: adminObj.phone, _id: adminObj._id } });
-//                 res.status(200).json({ message: "LogIn Successfull", token: accessToken });
-//             } else {
-//                 throw { status: 401, message: "Invalid Password" };
-//             }
-//         } else {
-//             throw { status: 401, message: "Admin Not Found" };
-//         }
-//     } catch (err) {
-//         next(err);
-//     }
-// };
-
-// total customer and active customer
 
 export const loginAdmin = async (req, res, next) => {
     try {
@@ -2109,6 +2140,8 @@ export const loginAdmin = async (req, res, next) => {
                     user: userPayload,
                 });
 
+                // await Token.create({ uid: adminObj.uid, userId: adminObj._id, token: accessToken, fcmToken: "superadmintokendummy" });
+
                 res.status(200).json({ message: "Login Successful", token: accessToken });
             } else {
                 throw { status: 401, message: "Invalid Password" };
@@ -2121,32 +2154,58 @@ export const loginAdmin = async (req, res, next) => {
     }
 };
 
-export const AWSNotification = async (req, res, next) => {
+export const loginAdminDB = async (req, res, next) => {
     try {
-        const { name, phone } = req.body;
-        const params = {
-            Message: `
-Hello Admin,
-            
-A new user has registered on Turning Point App. 
-Please verify and approve the profile. 
+        const { email, phone, password } = req.body;
 
-Name: ${name} Phone:  ${phone} 
-             
-Thank you, Turning Point Team`,
+        const adminObj = await Users.findOne({
+            $or: [{ email: new RegExp(`^${email}$`, "i") }, { phone: phone }],
+            role: { $in: [rolesObj.ADMIN, rolesObj.SUPERADMIN] },
+        });
 
-            TopicArn: process.env.SNS_TOPIC_ARN,
+        if (!adminObj) {
+            return res.status(401).json({ message: "Admin not found", status: false });
+        }
+
+        const isPasswordValid = await comparePassword(adminObj.password, password);
+        if (!isPasswordValid) {
+            return res.status(401).json({ message: "Invalid password", status: false });
+        }
+
+        // Generate token
+        const userPayload = {
+            name: adminObj.name,
+            email: adminObj.email,
+            phone: adminObj.phone,
+            _id: adminObj._id,
+            role: adminObj.role,
         };
 
-        sns.publish(params, (err, data) => {
-            if (err) {
-                res.status(500).send("Error sending SMS");
-            } else {
-                res.status(200).send("User registered and SMS sent");
-            }
+        const accessToken = await generateAccessJwt({
+            userId: adminObj._id,
+            role: adminObj.role,
+            user: userPayload,
+            uid: adminObj.uid,
+        });
+
+        // Delete existing tokens
+        await Token.deleteMany({ uid: adminObj.uid });
+
+        // Save new token
+        await Token.create({
+            uid: adminObj.uid,
+            userId: adminObj._id,
+            token: accessToken,
+            fcmToken: "superadmintokendummy",
+        });
+
+        return res.status(200).json({
+            message: "Login successful",
+            status: true,
+            token: accessToken,
         });
     } catch (err) {
-        next(err);
+        console.error("Admin login error:", err);
     }
 };
 
@@ -2776,8 +2835,10 @@ export const getUserContestsReport = async (req, res, next) => {
                 endDate: { $lt: currentContest.endDate },
             }).sort({ endDate: -1, endTime: -1 });
 
-            const previousEndDateTime = previousContest ? new Date(`${previousContest.endDate.toISOString().split("T")[0]}T${previousContest.endTime}:00`) : new Date(0);
-
+            // const previousEndDateTime = previousContest ? new Date(`${previousContest.endDate.toISOString().split("T")[0]}T${previousContest.endTime}:00`) : new Date(0);
+            const [hours, minutes] = previousContest.endTime.split(":");
+            const previousContestEndDateTime = new Date(previousContest.endDate);
+            previousContestEndDateTime.setHours(Number(hours), Number(minutes), 0, 0);
             enrichedResult = await Promise.all(
                 result.map(async (winner) => {
                     const [totalEntries, scannedCoupons] = await Promise.all([
@@ -2787,8 +2848,7 @@ export const getUserContestsReport = async (req, res, next) => {
                         }),
                         CouponsModel.find({
                             updatedAt: {
-                                $gt: previousEndDateTime,
-                                $lte: currentEndDateTime,
+                                $gt: previousContestEndDateTime,
                             },
                             $or: [{ carpenterId: winner.userId }, { contractorId: winner.userId }],
                         }),
@@ -3165,130 +3225,7 @@ export const getUserContests = async (req, res, next) => {
     }
 };
 
-export const testupdate = async (req, res) => {
-    try {
-        // Update condition
-        const query = { contestId: "67cfd9a53ac837d6f7516bd9" };
-
-        // Update operation
-        const update = { $set: { rank: "0", status: "join" } };
-
-        // Perform the update for all documents matching the query
-        const result = await UserContest.updateMany(query, update);
-
-        res.json({ message: "Update successful", result });
-    } catch (error) {
-        console.error("Update error:", error);
-        res.status(500).json({ message: "Internal server error" });
-    }
-};
-
-export const testupdateToBlockWinners = async (req, res) => {
-    try {
-        // Find all users who have won the contest
-        const winners = await UserContest.find({ contestId: "67988f7c04c549a72fa25375", status: "win" });
-
-        // Extract userIds from the winners list
-        const userIds = winners.map((winner) => winner.userId.toString());
-
-        if (userIds.length === 0) {
-            return res.json({ message: "No winners found to update." });
-        }
-
-        // Update isBlocked in the User model for the identified users
-        const result = await Users.updateMany({ _id: { $in: userIds } }, { $set: { isBlocked: true } });
-
-        res.json({ message: "Update successful", result });
-    } catch (error) {
-        console.error("Update error:", error);
-        res.status(500).json({ message: "Internal server error" });
-    }
-};
-
-export const testupdateToMarkLost = async (req, res) => {
-    try {
-        // Update condition: Find all users in the contest who are not "win"
-        const query = { contestId: "67988f7c04c549a72fa25375", status: { $ne: "win" } };
-
-        // Update operation: Set status to "lose"
-        const update = { $set: { status: "lose" } };
-
-        // Perform the update for all matching documents
-        const result = await UserContest.updateMany(query, update);
-
-        res.json({ message: "Update successful", result });
-    } catch (error) {
-        console.error("Update error:", error);
-        res.status(500).json({ message: "Internal server error" });
-    }
-};
-
 export const getPointHistoryByUserIdOld = async (req, res) => {
-    try {
-        let query = {}; // Initialize an empty query object
-
-        // Check if userId query parameter exists
-        if (!req.query.userId) {
-            return res.status(400).json({ message: "userId parameter is required" });
-        }
-        query.userId = req.query.userId; // Add userId to the query
-
-        // Check if the query parameter s is present and equals "ReelsLike"
-        if (req.query.s && req.query.s === "ReelsLike") {
-            // If s=ReelsLike, add additional filter to the query for description
-            (query.type = "CREDIT"), (query.description = { $regex: "liking a reel", $options: "i" });
-        }
-
-        // Check if the query parameter s is present and equals "Contest"
-        if (req.query.s && req.query.s === "Contest") {
-            // If s=Contest, add additional filter to the query for description
-            (query.type = "DEBIT"), (query.status = { $nin: ["reject", "pending"] });
-            query.description = { $regex: "Contest Joined", $options: "i" };
-        }
-
-        // Check if the query parameter s is present and equals "Scan"
-        if (req.query.s && req.query.s === "Coupon") {
-            // If s=Scan, add additional filter to the query for description
-            query.type = "CREDIT";
-            query.description = { $regex: "Coupon Earned", $options: "i" };
-        }
-
-        // Check if the query parameter s is present and equals "Redem"
-        if (req.query.s && req.query.s === "Redeem") {
-            // If s=Redem, add additional filter to the query for description
-            query.type = "DEBIT";
-            query.status = { $nin: ["reject", "pending"] };
-        }
-
-        if (req.query.s && req.query.s === "Referral") {
-            (query.type = "CREDIT"), (query.description = { $regex: "Referral Reward", $options: "i" });
-        }
-
-        // Pagination parameters
-        let page = parseInt(req.query.page) || 1;
-        let pageSize = parseInt(req.query.pageSize) || 10;
-
-        // Find total count of documents matching the query
-        const totalCount = await pointHistoryModel.countDocuments(query);
-
-        // Calculate total pages based on total count and page size
-        const totalPages = Math.ceil(totalCount / pageSize);
-
-        // Find documents based on the query with pagination
-        const pointHistoryData = await pointHistoryModel
-            .find(query)
-            .skip((page - 1) * pageSize) // Skip documents based on pagination
-            .limit(pageSize) // Limit the number of documents per page
-            .exec();
-
-        res.json({ data: pointHistoryData, totalPages, success: true, page, totalPages, totalCount, message: "User point history" });
-    } catch (error) {
-        console.error(error);
-        res.status(500).json({ error: "Internal server error" });
-    }
-};
-
-export const getPointHistoryByUserId = async (req, res) => {
     try {
         let query = {}; // Initialize an empty query object
 
@@ -3367,7 +3304,72 @@ export const getPointHistoryByUserId = async (req, res) => {
     }
 };
 
-export const getUserStatsReport = async (req, res, next) => {
+export const getPointHistoryByUserId = async (req, res) => {
+    try {
+        const { userId, s, startDate, endDate, page = 1, pageSize = 10, sortBy } = req.query;
+
+        if (!userId) {
+            return res.status(400).json({ message: "userId parameter is required" });
+        }
+
+        const query = { userId };
+
+        // Apply filters based on the "s" (source) type
+        switch (s) {
+            case "ReelsLike":
+                query.type = "CREDIT";
+                query.mobileDescription = /Reel/i;
+                break;
+            case "Contest":
+                query.type = "DEBIT";
+                query.status = { $nin: ["reject", "pending"] };
+                query.mobileDescription = /Contest/i;
+                break;
+            case "Coupon":
+                query.type = "CREDIT";
+                query.pointType = { $ne: "Diamond" };
+                query.mobileDescription = /Coupon|Royalty/i;
+                break;
+            case "Redeem":
+                query.type = "DEBIT";
+                query.status = { $nin: ["reject", "pending"] };
+                break;
+            case "Referral":
+                query.type = "CREDIT";
+                query.mobileDescription = /Referral/i;
+                break;
+        }
+
+        // Apply date range filtering
+        if (startDate || endDate) {
+            query.createdAt = {};
+            if (startDate) query.createdAt.$gte = new Date(startDate);
+            if (endDate) query.createdAt.$lte = new Date(endDate);
+        }
+
+        // Pagination and sorting
+        const skip = (parseInt(page) - 1) * parseInt(pageSize);
+        const limit = parseInt(pageSize);
+        const sortCondition = sortBy === "amount" ? { amount: -1 } : { createdAt: -1 };
+
+        // Parallel DB calls
+        const [totalCount, pointHistoryData] = await Promise.all([pointHistoryModel.countDocuments(query), pointHistoryModel.find(query).sort(sortCondition).skip(skip).limit(limit)]);
+
+        res.json({
+            data: pointHistoryData,
+            totalPages: Math.ceil(totalCount / limit),
+            success: true,
+            page: parseInt(page),
+            totalCount,
+            message: "User point history",
+        });
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ error: "Internal server error" });
+    }
+};
+
+export const getUserStatsReportOld = async (req, res, next) => {
     try {
         const userId = req.params.id;
         const user = await Users.findById(userId).exec();
@@ -3404,6 +3406,61 @@ export const getUserStatsReport = async (req, res, next) => {
         };
 
         res.status(200).json({ message: "User Contest", data: response, success: true });
+    } catch (error) {
+        console.error(error);
+        next(error);
+    }
+};
+
+export const getUserStatsReport = async (req, res, next) => {
+    try {
+        const userId = req.params.id;
+
+        // Fetch user
+        const user = await Users.findById(userId).lean().exec();
+        if (!user) {
+            return res.status(404).json({ message: "User not found !!!", success: false });
+        }
+
+        // Single efficient aggregation using $facet
+        const [result] = await pointHistoryModel
+            .aggregate([
+                { $match: { userId } },
+                {
+                    $facet: {
+                        likingReel: [{ $match: { type: "CREDIT", mobileDescription: "Reel" } }, { $group: { _id: null, totalAmount: { $sum: "$amount" }, totalCount: { $sum: 1 } } }],
+                        totalPointsRedeemedInContest: [
+                            { $match: { type: "DEBIT", status: { $nin: ["reject", "pending"] }, mobileDescription: "Contest" } },
+                            { $group: { _id: null, totalAmount: { $sum: "$amount" }, totalCount: { $sum: 1 } } },
+                        ],
+                        totalDebit: [{ $match: { type: "DEBIT", status: { $nin: ["reject", "pending"] } } }, { $group: { _id: null, totalAmount: { $sum: "$amount" } } }],
+                        totalPointsCoupon: [
+                            { $match: { type: "CREDIT", mobileDescription: { $in: ["Coupon", "Royalty"] }, pointType: { $ne: ["Diamond"] } } },
+                            { $group: { _id: null, totalAmount: { $sum: "$amount" }, totalCount: { $sum: 1 } } },
+                        ],
+                        totalPointsReferral: [{ $match: { type: "CREDIT", mobileDescription: "Referral" } }, { $group: { _id: null, totalAmount: { $sum: "$amount" } } }],
+                    },
+                },
+            ])
+            .exec();
+
+        // Destructure results and apply fallback defaults
+        const { likingReel = [], totalPointsRedeemedInContest = [], totalDebit = [], totalPointsCoupon = [], totalPointsReferral = [] } = result || {};
+
+        // Prepare response
+        const response = {
+            userName: user.name,
+            points: user.points,
+            totalPointsRedeemed: totalDebit[0]?.totalAmount || 0,
+            totalPointsRedeemedForProducts: totalPointsCoupon[0]?.totalAmount || 0,
+            totalPointsRedeemedForProductsCount: totalPointsCoupon[0]?.totalCount || 0,
+            totalPointsEarnedFormReferrals: totalPointsReferral[0]?.totalAmount || 0,
+            totalPointsRedeemedForLiking: likingReel[0]?.totalAmount || 0,
+            totalPointsRedeemedForLikingCount: likingReel[0]?.totalCount || 0,
+            totalPointsRedeemedInContest: totalPointsRedeemedInContest[0]?.totalAmount || 0,
+        };
+
+        res.status(200).json({ message: "User Stats", data: response, success: true });
     } catch (error) {
         console.error(error);
         next(error);
@@ -3661,11 +3718,9 @@ export const getAllCaprenterByContractorName = async (req, res) => {
 export const getCaprentersByContractorNameAdmin = async (req, res) => {
     try {
         const phone = req.params.phone;
-        const carpenters = await Users.find({ "contractor.phone": { $in: phone }, role: "CARPENTER" }).select("name phone email isActive kycStatus role points");
+        console.log("Fetching carpenters for contractor with phone:", phone, typeof phone);
 
-        // if (carpenters.length === 0) {
-        //     return res.status(404).json({ message: "No carpenters found for the specified business name" });
-        // }
+        const carpenters = await Users.find({ "contractor.phone": phone, role: "CARPENTER" }).select("name phone email isActive kycStatus role points");
 
         res.status(200).json(carpenters);
     } catch (err) {
@@ -3926,6 +3981,462 @@ export const getTop50MonthlyCarpenters = async (req, res) => {
     }
 };
 
+export const getTop50MonthlyContractorsScanPointsworking = async (req, res) => {
+    try {
+        const previousContest = await Contest.findOne({ status: "CLOSED" }).sort({ endDate: -1 }).exec();
+        const [hours, minutes] = previousContest.endTime.split(":");
+        const previousContestEndDateTime = new Date(previousContest.endDate);
+        previousContestEndDateTime.setHours(Number(hours), Number(minutes), 0, 0);
+
+        // Step 1: Aggregate top 50 contractor IDs with total points this month
+        const topContractors = await pointHistoryModel.aggregate([
+            {
+                $match: {
+                    type: "CREDIT",
+                    userId: { $ne: null },
+                    mobileDescription: "Royalty",
+                    createdAt: { $gt: previousContestEndDateTime },
+                },
+            },
+            {
+                $group: {
+                    _id: "$userId",
+                    totalPointsEarned: { $sum: "$amount" },
+                },
+            },
+            { $sort: { totalPointsEarned: -1 } },
+            { $limit: 50 },
+        ]);
+
+        if (!topContractors.length) {
+            return res.status(200).json({ message: "No Contractors found" });
+        }
+
+        // Step 2: Fetch contractor details
+        const contractorIds = topContractors.map((c) => new mongoose.Types.ObjectId(c._id));
+        const contractorDetails = await userModel
+            .find(
+                {
+                    _id: { $in: contractorIds },
+                    role: "CONTRACTOR",
+                    phone: { $ne: "9876543210" },
+                },
+                "_id name phone businessName role points image"
+            )
+            .lean(); // lean() for faster plain JS objects
+
+        // Step 3: Create a fast lookup map
+        const pointsMap = new Map();
+        topContractors.forEach((c) => pointsMap.set(c._id.toString(), c.totalPointsEarned));
+
+        // Step 4: Merge details with points
+        const result = contractorDetails.map((contractor) => ({
+            ...contractor,
+            totalPointsEarned: pointsMap.get(contractor._id.toString()) || 0,
+        }));
+
+        // Step 5: Final sort (in case filtering changed order)
+        result.sort((a, b) => b.totalPointsEarned - a.totalPointsEarned);
+
+        res.status(200).json({ success: true, data: result });
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ message: "Server error" });
+    }
+};
+
+export const getTop50MonthlyContractorsScanPoints = async (req, res) => {
+    try {
+        const previousContest = await Contest.findOne({ status: "CLOSED" }).sort({ endDate: -1 }).exec();
+
+        const [hours, minutes] = previousContest.endTime.split(":");
+        const previousContestEndDateTime = new Date(previousContest.endDate);
+        previousContestEndDateTime.setHours(Number(hours), Number(minutes), 0, 0);
+
+        // Step 1: Aggregate top 50 contractor IDs with total points + scan count this month
+        const topContractors = await pointHistoryModel.aggregate([
+            {
+                $match: {
+                    type: "CREDIT",
+                    userId: { $ne: null },
+                    mobileDescription: "Royalty",
+                    pointType: { $ne: "Diamond" },
+                    createdAt: { $gt: previousContestEndDateTime },
+                },
+            },
+            {
+                $group: {
+                    _id: "$userId",
+                    totalPointsEarned: { $sum: "$amount" },
+                    scanCount: { $sum: 1 }, // Count number of scans
+                },
+            },
+            { $sort: { totalPointsEarned: -1 } },
+            { $limit: 50 },
+        ]);
+
+        if (!topContractors.length) {
+            return res.status(200).json({ message: "No Contractors found" });
+        }
+
+        // Step 2: Fetch contractor details
+        const contractorIds = topContractors.map((c) => new mongoose.Types.ObjectId(c._id));
+        const contractorDetails = await userModel
+            .find(
+                {
+                    _id: { $in: contractorIds },
+                    role: "CONTRACTOR",
+                    phone: { $ne: "9876543210" },
+                },
+                "_id name phone businessName role points image"
+            )
+            .lean();
+
+        // Step 3: Create lookup maps
+        const pointsMap = new Map();
+        const scanMap = new Map();
+        topContractors.forEach((c) => {
+            const id = c._id.toString();
+            pointsMap.set(id, c.totalPointsEarned);
+            scanMap.set(id, c.scanCount);
+        });
+
+        // Step 4: Merge details
+        const result = contractorDetails.map((contractor) => {
+            const id = contractor._id.toString();
+            return {
+                ...contractor,
+                totalPointsEarned: pointsMap.get(id) || 0,
+                scanCount: scanMap.get(id) || 0,
+            };
+        });
+
+        // Step 5: Sort by points again
+        result.sort((a, b) => b.totalPointsEarned - a.totalPointsEarned);
+
+        res.status(200).json({ success: true, data: result });
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ message: "Server error" });
+    }
+};
+
+export const getTop50ContractorsScanPoints = async (req, res) => {
+    try {
+        // Step 1: Aggregate top 50 contractor IDs with total points and scan count (all time)
+        const topContractors = await pointHistoryModel.aggregate([
+            {
+                $match: {
+                    type: "CREDIT",
+                    userId: { $ne: null },
+                    mobileDescription: "Royalty",
+                    pointType: { $ne: "Diamond" },
+                },
+            },
+            {
+                $group: {
+                    _id: "$userId",
+                    totalPointsEarned: { $sum: "$amount" },
+                    scanCount: { $sum: 1 }, // count of royalty scans
+                },
+            },
+            { $sort: { totalPointsEarned: -1 } },
+            { $limit: 50 },
+        ]);
+
+        if (!topContractors.length) {
+            return res.status(200).json({ message: "No Contractors found" });
+        }
+
+        // Step 2: Fetch contractor details
+        const contractorIds = topContractors.map((c) => new mongoose.Types.ObjectId(c._id));
+        const contractorDetails = await userModel
+            .find(
+                {
+                    _id: { $in: contractorIds },
+                    role: "CONTRACTOR",
+                    phone: { $ne: "9876543210" },
+                },
+                "_id name phone businessName role points image"
+            )
+            .lean(); // lean() for performance
+
+        // Step 3: Create a map of contractorId -> stats
+        const pointsMap = new Map();
+        topContractors.forEach((c) =>
+            pointsMap.set(c._id.toString(), {
+                totalPointsEarned: c.totalPointsEarned,
+                scanCount: c.scanCount,
+            })
+        );
+
+        // Step 4: Merge details with points and scan count
+        const result = contractorDetails.map((contractor) => {
+            const stats = pointsMap.get(contractor._id.toString()) || { totalPointsEarned: 0, scanCount: 0 };
+            return {
+                ...contractor,
+                totalPointsEarned: stats.totalPointsEarned,
+                scanCount: stats.scanCount,
+            };
+        });
+
+        // Step 5: Final sort just in case filtering changed order
+        result.sort((a, b) => b.totalPointsEarned - a.totalPointsEarned);
+
+        res.status(200).json({ success: true, data: result });
+    } catch (err) {
+        console.error("Error fetching top contractors:", err);
+        res.status(500).json({ message: "Server error" });
+    }
+};
+
+export const getTop50MonthlyCarpentersScanPointsworking = async (req, res) => {
+    try {
+        const previousContest = await Contest.findOne({ status: "CLOSED" }).sort({ endDate: -1 }).exec();
+        const [hours, minutes] = previousContest.endTime.split(":");
+        const previousContestEndDateTime = new Date(previousContest.endDate);
+        previousContestEndDateTime.setHours(Number(hours), Number(minutes), 0, 0);
+
+        // Step 1: Aggregate total points for carpenters in the current month
+        const topCarpenters = await pointHistoryModel.aggregate([
+            {
+                $match: {
+                    type: "CREDIT",
+                    userId: { $ne: null },
+                    mobileDescription: "Coupon",
+                    createdAt: { $gt: previousContestEndDateTime },
+                },
+            },
+            {
+                $group: {
+                    _id: "$userId",
+                    totalPointsEarned: { $sum: "$amount" },
+                },
+            },
+            { $sort: { totalPointsEarned: -1 } },
+            { $limit: 50 },
+        ]);
+
+        if (!topCarpenters.length) {
+            return res.status(200).json({ message: "No Carpenters found" });
+        }
+
+        // Step 2: Fetch carpenter user details
+        const carpenterIds = topCarpenters.map((c) => new mongoose.Types.ObjectId(c._id));
+        const carpenterDetails = await userModel.find({ _id: { $in: carpenterIds }, role: "CARPENTER" }, "_id name phone role points image");
+
+        // Step 3: Map totalPointsEarned to user details using a Map for efficiency
+        const pointsMap = {};
+        topCarpenters.forEach((c) => {
+            pointsMap[c._id.toString()] = c.totalPointsEarned;
+        });
+
+        // Step 4: Merge and sort by totalPointsEarned
+        const result = carpenterDetails
+            .map((carpenter) => {
+                return {
+                    ...carpenter.toObject(),
+                    totalPointsEarned: pointsMap[carpenter._id.toString()] || 0,
+                };
+            })
+            .sort((a, b) => b.totalPointsEarned - a.totalPointsEarned); // Ensures correct order
+
+        return res.status(200).json({ success: true, data: result });
+    } catch (err) {
+        console.error("Error fetching top carpenters:", err);
+        res.status(500).json({ message: "Server error" });
+    }
+};
+
+export const getTop50MonthlyCarpentersScanPoints = async (req, res) => {
+    try {
+        const previousContest = await Contest.findOne({ status: "CLOSED" }).sort({ endDate: -1 }).exec();
+
+        const [hours, minutes] = previousContest.endTime.split(":");
+        const previousContestEndDateTime = new Date(previousContest.endDate);
+        previousContestEndDateTime.setHours(Number(hours), Number(minutes), 0, 0);
+
+        console.log("Previous Contest End DateTime:", previousContestEndDateTime);
+
+        // Step 1: Aggregate total points and scan count
+        const topCarpenters = await pointHistoryModel.aggregate([
+            {
+                $match: {
+                    type: "CREDIT",
+                    userId: { $ne: null },
+                    mobileDescription: "Coupon",
+                    pointType: { $ne: "Diamond" },
+
+                    createdAt: { $gt: previousContestEndDateTime },
+                },
+            },
+            {
+                $group: {
+                    _id: "$userId",
+                    totalPointsEarned: { $sum: "$amount" },
+                    scanCount: { $sum: 1 },
+                },
+            },
+            { $sort: { totalPointsEarned: -1 } },
+            { $limit: 50 },
+        ]);
+
+        if (!topCarpenters.length) {
+            return res.status(200).json({ message: "No Carpenters found" });
+        }
+
+        // Step 2: Fetch carpenter user details
+        const carpenterIds = topCarpenters.map((c) => new mongoose.Types.ObjectId(c._id));
+        const carpenterDetails = await userModel.find({ _id: { $in: carpenterIds }, role: "CARPENTER" }, "_id name phone role points image");
+
+        // Step 3: Create maps for fast lookup
+        const pointsMap = {};
+        const scanCountMap = {};
+        topCarpenters.forEach((c) => {
+            const idStr = c._id.toString();
+            pointsMap[idStr] = c.totalPointsEarned;
+            scanCountMap[idStr] = c.scanCount;
+        });
+
+        // Step 4: Merge and sort by totalPointsEarned
+        const result = carpenterDetails
+            .map((carpenter) => {
+                const idStr = carpenter._id.toString();
+                return {
+                    ...carpenter.toObject(),
+                    totalPointsEarned: pointsMap[idStr] || 0,
+                    scanCount: scanCountMap[idStr] || 0,
+                };
+            })
+            .sort((a, b) => b.totalPointsEarned - a.totalPointsEarned); // Ensure order
+
+        return res.status(200).json({ success: true, data: result });
+    } catch (err) {
+        console.error("Error fetching top carpenters:", err);
+        res.status(500).json({ message: "Server error" });
+    }
+};
+
+export const getTop50CarpentersScanPointsold = async (req, res) => {
+    try {
+        // Step 1: Aggregate total points and scan count for carpenters (no date filter)
+        const topCarpenters = await pointHistoryModel.aggregate([
+            {
+                $match: {
+                    type: "CREDIT",
+                    userId: { $ne: null },
+                    mobileDescription: "Coupon",
+                },
+            },
+            {
+                $group: {
+                    _id: "$userId",
+                    totalPointsEarned: { $sum: "$amount" },
+                    scanCount: { $sum: 1 }, // Count of records
+                },
+            },
+            { $sort: { totalPointsEarned: -1 } },
+            { $limit: 50 },
+        ]);
+
+        if (!topCarpenters.length) {
+            return res.status(200).json({ message: "No Carpenters found" });
+        }
+
+        // Step 2: Fetch carpenter user details
+        const carpenterIds = topCarpenters.map((c) => new mongoose.Types.ObjectId(c._id));
+        const carpenterDetails = await userModel.find({ _id: { $in: carpenterIds }, role: "CARPENTER" }, "_id name phone role points image");
+
+        // Step 3: Create a map of userId -> stats
+        const pointsMap = {};
+        topCarpenters.forEach((c) => {
+            pointsMap[c._id.toString()] = {
+                totalPointsEarned: c.totalPointsEarned,
+                scanCount: c.scanCount,
+            };
+        });
+
+        // Step 4: Merge and sort
+        const result = carpenterDetails
+            .map((carpenter) => {
+                const stats = pointsMap[carpenter._id.toString()] || { totalPointsEarned: 0, scanCount: 0 };
+                return {
+                    ...carpenter.toObject(),
+                    totalPointsEarned: stats.totalPointsEarned,
+                    scanCount: stats.scanCount,
+                };
+            })
+            .sort((a, b) => b.totalPointsEarned - a.totalPointsEarned);
+
+        return res.status(200).json({ success: true, data: result });
+    } catch (err) {
+        console.error("Error fetching top carpenters:", err);
+        res.status(500).json({ message: "Server error" });
+    }
+};
+
+export const getTop50CarpentersScanPoints = async (req, res) => {
+    try {
+        // Step 1: Aggregate total points and scan count for carpenters (no date filter)
+        const topCarpenters = await pointHistoryModel.aggregate([
+            {
+                $match: {
+                    type: "CREDIT",
+                    userId: { $ne: null },
+                    mobileDescription: "Coupon",
+                    pointType: { $ne: "Diamond" },
+                },
+            },
+            {
+                $group: {
+                    _id: "$userId",
+                    totalPointsEarned: { $sum: "$amount" },
+                    scanCount: { $sum: 1 }, // Count of records
+                },
+            },
+            { $sort: { totalPointsEarned: -1 } },
+            { $limit: 50 },
+        ]);
+
+        if (!topCarpenters.length) {
+            return res.status(200).json({ message: "No Carpenters found" });
+        }
+
+        // Step 2: Fetch carpenter user details
+        const carpenterIds = topCarpenters.map((c) => new mongoose.Types.ObjectId(c._id));
+        const carpenterDetails = await userModel.find({ _id: { $in: carpenterIds }, role: "CARPENTER" }, "_id name phone role points image");
+
+        // Step 3: Create a map of userId -> stats
+        const pointsMap = {};
+        topCarpenters.forEach((c) => {
+            pointsMap[c._id.toString()] = {
+                totalPointsEarned: c.totalPointsEarned,
+                scanCount: c.scanCount,
+            };
+        });
+
+        // Step 4: Merge and sort, then add count
+        const result = carpenterDetails
+            .map((carpenter) => {
+                const stats = pointsMap[carpenter._id.toString()] || { totalPointsEarned: 0, scanCount: 0 };
+                return {
+                    ...carpenter.toObject(),
+                    totalPointsEarned: stats.totalPointsEarned,
+                    scanCount: stats.scanCount,
+                };
+            })
+            .sort((a, b) => b.totalPointsEarned - a.totalPointsEarned)
+            .map((carpenter, index) => ({
+                ...carpenter,
+            }));
+
+        return res.status(200).json({ success: true, data: result });
+    } catch (err) {
+        console.error("Error fetching top carpenters:", err);
+        res.status(500).json({ message: "Server error" });
+    }
+};
+
 export const updateTotalPointsForAllUsers = async (req, res) => {
     try {
         const usersWithCreditPoints = await pointHistoryModel.aggregate([
@@ -4073,8 +4584,6 @@ export const getContractorUsingPhone = async (req, res) => {
         res.status(500).json({ message: "Server error" });
     }
 };
-
-export const logout = async (req, res) => {};
 
 export const customDelete = async (req, res) => {
     try {

@@ -1,4 +1,4 @@
-import { de } from "date-fns/locale";
+
 import mongoose from "mongoose";
 
 let pointHistory = mongoose.Schema(
@@ -12,7 +12,7 @@ let pointHistory = mongoose.Schema(
         status: { type: String, enum: ["success", "failed", "pending", "delivered"] },
         reason: String,
         additionalInfo: {
-            transferType: { type: String, enum: ["UPI", "BANK", "CASH", "DIAMOND"] },
+            transferType: { type: String, enum: ["DIAMOND"] },
             transferDetails: Object,
         },
         pointType: { type: String, default: "Point" },
@@ -21,5 +21,8 @@ let pointHistory = mongoose.Schema(
 );
 
 pointHistory.index({ createdAt: 1 });
+pointHistory.index({ userId: 1, type: 1, mobileDescription: 1 });
+pointHistory.index({ userId: 1, type: 1, status: 1 });
+
 
 export default mongoose.model("pointHistory", pointHistory);

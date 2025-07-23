@@ -53,6 +53,7 @@ export const UserListwithOutPagination = (payload) => {
                 isBlocked: 1,
                 note: 1,
                 contractor: 1,
+               
             },
         },
 
@@ -172,6 +173,7 @@ export const UserList = (payload) => {
                 isVerified: 1,
                 diamonds: 1,
                 accumulatedPoints: 1,
+                 kycApprovedDate:1
             },
         },
 

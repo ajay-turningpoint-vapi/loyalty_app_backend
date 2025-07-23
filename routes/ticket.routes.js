@@ -1,8 +1,9 @@
 const express = require("express");
 
 const ticketController = require("../controllers/ticket.controller");
-const { authorizeJwt } = require("../middlewares/auth.middleware");
+const { authorizeJwt, limiter } = require("../middlewares/auth.middleware");
 const router = express.Router();
+// router.use(limiter);
 router.get("/", authorizeJwt, ticketController.getTickets);
 router.get("/admin", ticketController.getTicketsAdmin);
 router.post("/", authorizeJwt, ticketController.createTicket);

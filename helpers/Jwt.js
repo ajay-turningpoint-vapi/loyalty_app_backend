@@ -11,12 +11,3 @@ export const generateAccessJwt = async (obj) => {
     );
 };
 
-export const generateRefreshJwt = (obj) => {
-    return jwt.sign(
-        {
-            ...obj,
-            exp: Math.floor(Date.now() / 1000) + 6 * 30 * 24 * 60 * 60,
-        },
-        CONFIG.JWT_REFERSH_TOKEN_SECRET
-    );
-};

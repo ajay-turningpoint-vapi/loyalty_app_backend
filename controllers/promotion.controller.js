@@ -13,7 +13,7 @@ exports.sendNotification = async (req, res) => {
 
     try {
         // Fetch user tokens from the database based on the role, excluding "Admin User" and "Contractor"
-        const query = { name: { $nin: ["Admin User", "Contractor"] } };
+        const query = { name: { $nin: ["Admin User", "Contractor", "Super Admin"] } };
         if (role) query.role = role;
 
         const users = await userModel.find(query);
@@ -29,12 +29,14 @@ exports.sendNotification = async (req, res) => {
                 body: message,
                 ...(imageUrl && { image: imageUrl }), // ✅ Only include image if `imageUrl` exists
             },
+
             data: {
                 type: videoPromotion ? "videoPromotion" : "promotion",
                 mediaType: videoPromotion ? "video" : "image",
                 mediaUrl: String(mediaUrl),
                 videoPromotion: videoPromotion ? JSON.stringify(videoPromotion) : "",
             },
+            priority: "high",
         };
 
         // Send notifications and handle token errors
@@ -89,7 +91,7 @@ exports.createPromotion = async (req, res) => {
                 name: title,
                 fileUrl: videoUrl,
                 isVideo: true,
-                points: 90,
+                points: 75,
                 type: "videoPromotion",
             });
 
@@ -164,7 +166,7 @@ exports.updatePromotionold = async (req, res) => {
 
 exports.updatePromotion = async (req, res) => {
     const { id } = req.params;
-    const {  title, message, imageUrl, videoUrl } = req.body;
+    const { title, message, imageUrl, videoUrl } = req.body;
 
     if (!id) {
         return res.status(400).json({ error: "Promotion ID is required" });
@@ -186,14 +188,14 @@ exports.updatePromotion = async (req, res) => {
                 name: title || promotion.title,
                 fileUrl: videoUrl,
                 isVideo: true,
-                points: 90,
+                points: 75,
                 type: "Promotion",
             });
 
             const savedReel = await newReel.save();
             promotion.videoPromotion = savedReel.toObject();
             promotion.imageUrl = null; // 🔄 Ensure image is removed
-        } 
+        }
         // Handle image update (only if no videoUrl)
         else if (imageUrl) {
             promotion.imageUrl = imageUrl;
@@ -211,7 +213,6 @@ exports.updatePromotion = async (req, res) => {
         res.status(500).json({ error: "Failed to update promotion" });
     }
 };
-
 
 // DELETE: Delete a promotion by ID
 exports.deletePromotion = async (req, res) => {

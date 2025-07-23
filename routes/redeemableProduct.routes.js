@@ -4,7 +4,7 @@ import { addProduct, deleteProduct, editProduct, getProducts, getProductsAdmin, 
 let router = express.Router();
 router.post("/add", addProduct);
 router.get("/", authorizeJwt, getProducts);
-router.get("/admin", authorizeJwt, getProductsAdmin);
+router.get("/admin", getProductsAdmin);
 router.put("/:id", editProduct);
 router.delete("/:id", deleteProduct);
 router.post("/", authorizeJwt, redeemProduct);

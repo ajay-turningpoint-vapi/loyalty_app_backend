@@ -8,66 +8,28 @@ import { sendWhatsAppMessageForBankTransfer, sendWhatsAppMessageForUPITransfer, 
 import redeemableOrderHistoryModel from "../models/redeemableOrderHistory.model";
 
 export const pointHistoryByID = async (req, res) => {
-    // try {
-    //     const { userId } = req.body;
-
-    //     if (!userId) {
-    //         return res.status(400).json({ message: "User ID is required", success: false });
-    //     }
-
-    //     const logs = await pointHistory.find({ userId }).lean();
-    //     const count = await pointHistory.countDocuments({ userId });
-
-    //     res.json({
-    //         success: true,
-    //         message: "Point history logs retrieved successfully",
-    //         data: logs,
-    //         count: count,
-    //     });
-    // } catch (error) {
-    //     console.error("Error fetching point history logs:", error.message);
-    //     res.status(500).json({ message: "Server error", success: false });
-    // }
-
     try {
-        const { userId } = req.query;
+        const { userId } = req.body;
 
         if (!userId) {
-            return res.status(400).json({ message: "userId is required" });
+            return res.status(400).json({ message: "User ID is required", success: false });
         }
 
-        // Define current month range
-        const startOfMonth = new Date("2025-06-01T00:00:00.000Z");
-        const startOfNextMonth = new Date("2025-07-01T00:00:00.000Z");
+        const logs = await pointHistory.find({ userId,mobileDescription:"Coupon" }).lean();
+        const count = await pointHistory.countDocuments({ userId });
 
-        // Aggregation to filter and sum
-        const result = await pointHistory.aggregate([
-            {
-                $match: {
-                    userId,
-                    type: "CREDIT",
-                    createdAt: {
-                        $gte: startOfMonth,
-                        $lt: startOfNextMonth,
-                    },
-                },
-            },
-            {
-                $group: {
-                    _id: null,
-                    totalAmount: { $sum: "$amount" },
-                    count: { $sum: 1 },
-                },
-            },
-        ]);
-
-        // Return total amount and count of matching docs
-        const summary = result[0] || { totalAmount: 0, count: 0 };
-        res.json({ userId, ...summary });
+        res.json({
+            success: true,
+            message: "Point history logs retrieved successfully",
+            data: logs,
+            count: count,
+        });
     } catch (error) {
-        console.error("Error fetching credit summary:", error);
-        res.status(500).json({ message: "Internal server error" });
+        console.error("Error fetching point history logs:", error.message);
+        res.status(500).json({ message: "Server error", success: false });
     }
+
+    
 };
 
 export const pointHistoryDelete = async (req, res) => {

@@ -18,7 +18,7 @@ let User = mongoose.Schema(
             name: String,
             phone: String,
         },
-        pincode: String,
+
         password: { type: String },
         points: { type: Number, default: 100 },
         isActive: { type: Boolean, default: false },
@@ -29,10 +29,13 @@ let User = mongoose.Schema(
         },
         isVerified: { type: Boolean, default: false },
 
-        image: String,
+        image: {
+            type: String,
+            default: "https://turningpoint-videos.s3.ap-south-1.amazonaws.com/f50fcacc-dc67-49e7-9ff5-1dbdf9d418f9.png",
+        },
         idFrontImage: String,
         idBackImage: String,
-      
+
         kycStatus: {
             type: String,
             default: "pending",
@@ -57,6 +60,7 @@ let User = mongoose.Schema(
         totalPointsEarned: { type: Number, default: 0 },
         diamonds: { type: Number, default: 0 },
         accumulatedPoints: { type: Number, default: 0 },
+        kycApprovedDate: { type: Date, default: null },
     },
     { timestamps: true }
 );

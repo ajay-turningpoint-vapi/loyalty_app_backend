@@ -5,11 +5,7 @@ import {
     getContest,
     getContestById,
     updateById,
-    joinContest,
     myContests,
-    luckyDraw,
-    previousContest,
-    currentContest,
     getContestAdmin,
     getCurrentContest,
     getCurrentContestRewards,
@@ -17,45 +13,30 @@ import {
     joinContestByCoupon,
     getContestCoupons,
     getAllContest,
-    rewardNotificationWinners,
-    sendContestNotifications,
-    sendContestWinnerNotifications,
-    getOpenContests,
-    checkContest,
-    checkContestPrevious,
     addUserContestNote,
-    updateUserToObjectId,
     createPointlogsForRedeemContest,
-    userContestBluckStatusUpdate,
+    getExcelReportOfContestRewards,
 } from "../controllers/contest.controller";
-let router = express.Router();
-import { authorizeJwt } from "../middlewares/auth.middleware";
 
+import { authorizeJwt, limiter } from "../middlewares/auth.middleware";
+let router = express.Router();
+// router.use(limiter);
 router.post("/addContest", addContest);
 
 router.get("/getContestById/:id", getContestById);
 router.get("/getAllContest", getAllContest);
 router.get("/getContest", authorizeJwt, getContest);
 router.get("/getContestCoupons", authorizeJwt, getContestCoupons);
-router.get("/getContestAdmin", authorizeJwt, getContestAdmin);
+router.get("/getContestAdmin", getContestAdmin);
 router.patch("/updateById/:id", updateById);
 router.delete("/deleteById/:id", deleteById);
-// router.get("/joinContest/:id", authorizeJwt, joinContest);
 router.post("/joinContest/:id", authorizeJwt, joinContestByCoupon);
 router.post("/addUserContestNote", addUserContestNote);
 router.get("/myContests", authorizeJwt, myContests);
 router.get("/getCurrentContest", authorizeJwt, getCurrentContest);
-router.post("/luckyDraw/:id", authorizeJwt, luckyDraw);
-
-router.get("/rewardNotificationWinners/:contestId", sendContestWinnerNotifications);
 router.get("/currentContestRewards", getCurrentContestRewards);
 router.get("/previousContestRewards", getPreviousContestRewards);
-router.get("/openContest", getOpenContests);
-
-router.get("/check-contest-previous", checkContestPrevious);
-
-router.put("/updateUserToObjectId", updateUserToObjectId);
-router.get("/check-contest", checkContest);
 router.get("/create-contest-points", createPointlogsForRedeemContest);
-router.put("/user-contest-bulk-status-update", userContestBluckStatusUpdate);
+
+router.get("/excel-currentContestRewards/:contestId", getExcelReportOfContestRewards);
 export default router;

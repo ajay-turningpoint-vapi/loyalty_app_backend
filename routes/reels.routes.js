@@ -4,7 +4,6 @@ import { authorizeJwt } from "../middlewares/auth.middleware";
 let router = express.Router();
 
 router.post("/", addReels);
-
 router.get("/getReels", getReels);
 router.get("/getRandomReels", getRandomReels);
 router.get("/getReelsType", getReelTypesCount);

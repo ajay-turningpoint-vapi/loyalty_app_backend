@@ -3,8 +3,7 @@ import userContest from "../models/userContest";
 import userModel from "../models/user.model";
 import Prize from "../models/prize.model";
 import { sendNotificationMessage } from "../middlewares/fcm.middleware";
-import { sendWhatsAppMessageContestWinners } from "../helpers/utils";
-import { client } from "./whatsappClient";
+
 
 export const checkContestWorking = async (date, time) => {
     try {
@@ -278,40 +277,6 @@ export const checkContestWinners = async (date, time) => {
     }
 };
 
-const sendNotificationMessageToAllUsers = async (message) => {
-    const clientReady = await isClientReady(); // This function will check if the client is ready
 
-    if (!clientReady) {
-        return res.status(400).json({ message: "Client is not ready to send messages", success: false });
-    }
-    const users = await userModel.find({ role: { $ne: "ADMIN" }, name: { $ne: "Contractor" } }, "phone");
-    for (const user of users) {
-        try {
-            const number = `91${user.phone}`;
-            const formattedNumber = `${number}@c.us`;
-            const response = await client.sendMessage(formattedNumber, message);
 
-            if (response && response.success) {
-                console.log("Message sent successfully");
-            } else {
-                console.error("Failed to send message:", response.error || response.message);
-            }
-        } catch (error) {
-            console.error("Error sending message:", error.message);
-        }
-    }
-};
 
-const isClientReady = async () => {
-    try {
-        // Assuming you are using whatsapp-web.js or similar
-        if (client && client.info && client.info.wid) {
-            return true;
-        } else {
-            return false;
-        }
-    } catch (error) {
-        console.error("Error checking client readiness:", error);
-        return false;
-    }
-};

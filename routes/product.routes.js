@@ -1,8 +1,8 @@
 import express from "express";
 import { addProduct, deleteProductById, getAllProducts, updateProductById, getActiveProducts, getProductsPubAndTotal, getProductsCategoryWise, getProductsCount } from "../controllers/product.controller";
-
+import {  limiter } from "../middlewares/auth.middleware";
 let router = express.Router();
-
+// router.use(limiter);
 router.post("/addProduct", addProduct);
 router.get("/getProducts", getAllProducts);
 router.patch("/updateById/:id", updateProductById);

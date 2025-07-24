@@ -60,7 +60,8 @@ import {
     getTop50MonthlyContractorsScanPoints,
     getTop50ContractorsScanPoints,
 } from "../controllers/users.controller";
-import { authorizeJwt, limiter } from "../middlewares/auth.middleware";
+import { authorizeJwt } from "../middlewares/auth.middleware";
+
 
 let router = express.Router();
 
@@ -135,6 +136,8 @@ router.get("/getUserContestsCount/:id", getUserContestsJoinCount);
 router.get("/getCounts", getCounts);
 router.delete("/deleteById/:id", deleteUser);
 router.get("/not-listed-contractors", notListedContractors);
+
+
 
 //admin =
 router.post("/registerAdmin", registerAdmin);

@@ -124,6 +124,12 @@
 
 // module.exports = router;
 
+
+
+
+
+//latest code
+
 const express = require("express");
 const multer = require("multer");
 const sharp = require("sharp");
@@ -134,15 +140,18 @@ const dotenv = require("dotenv");
 const { S3Client, PutObjectCommand } = require("@aws-sdk/client-s3");
 const ffmpeg = require("fluent-ffmpeg");
 const ffmpegPath = require("ffmpeg-static");
+const ffprobePath = require("ffprobe-static").path;
 const { PassThrough } = require("stream");
 
 dotenv.config();
 
 const router = express.Router();
 
-// Set ffmpeg binary path
+// Set ffmpeg and ffprobe binary paths
 ffmpeg.setFfmpegPath(ffmpegPath);
+ffmpeg.setFfprobePath(ffprobePath);
 
+// AWS S3 Client
 const s3Client = new S3Client({
   region: process.env.AWS_REGION,
   credentials: {
@@ -151,14 +160,15 @@ const s3Client = new S3Client({
   },
 });
 
+// Multer in-memory storage
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: {
-    fileSize: 20 * 1024 * 1024, // 20MB
+    fileSize: 20 * 1024 * 1024, // Max 20MB
   },
 });
 
-// Analyze video buffer to get resolution & bitrate
+// Analyze video buffer: return height and bitrate in kbps
 function analyzeVideo(buffer) {
   return new Promise((resolve, reject) => {
     const stream = new PassThrough();
@@ -171,16 +181,17 @@ function analyzeVideo(buffer) {
       if (!videoStream) return reject(new Error("No video stream found"));
 
       const height = videoStream.height || 0;
-      const bitrate = parseInt(videoStream.bit_rate || metadata.format.bit_rate || "0");
+      const bitrate = parseInt(videoStream.bit_rate || metadata.format.bit_rate || "0", 10);
 
       resolve({
         height,
-        bitrate: Math.floor(bitrate / 1000), // Convert to kbps
+        bitrate: Math.floor(bitrate / 1000), // kbps
       });
     });
   });
 }
 
+// Upload route
 router.post("/upload", upload.array("images"), async (req, res) => {
   try {
     if (!req.files || req.files.length === 0) {

@@ -177,7 +177,7 @@ export const googleLogin = async (req, res) => {
 
 export const registerUser = async (req, res, next) => {
     try {
-        const { phone, role, idToken, fcmToken, refCode, businessName } = req.body;
+        const { phone, name, email, role, idToken, fcmToken, refCode, businessName } = req.body;
 
         // Check if user already exists
         const userExistCheck = await Users.findOne({ $or: [{ phone }, { email: new RegExp(`^${req.body.email}$`, "i") }] });
@@ -187,7 +187,14 @@ export const registerUser = async (req, res, next) => {
 
         // Verify ID token and extract user details
         const decodedToken = await admin.auth().verifyIdToken(idToken);
-        const { uid, name, email, picture } = decodedToken;
+        const { uid, picture } = decodedToken;
+
+        if (name == null && decodedToken.name) {
+            name = decodedToken.name;
+        }
+        if (email == null && decodedToken.email) {
+            email = decodedToken.email;
+        }
 
         let referrer, newUser;
 
@@ -566,7 +573,7 @@ export const updateUserProfile = async (req, res, next) => {
 export const updateUserProfileAdmin = async (req, res, next) => {
     try {
         const { userId, isBlocked, isActive, kycStatus, role, businessName, contractor, ...updateFields } = req.body;
-        console.log("updateFields", req.body);
+    
 
         if (!userId) {
             return res.status(400).json({ message: "User ID is required", success: false });

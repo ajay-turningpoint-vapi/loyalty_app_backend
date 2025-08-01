@@ -81,7 +81,10 @@ export const verifyOtp = async (req, res) => {
         return res.status(200).json({ message: "OTP verified successfully" });
     }
 
-    if (process.env.PHONE === phone && process.env.OTP === otp) {
+    if (
+    (process.env.PHONE === phone || process.env.IPHONE === phone) &&
+    process.env.OTP === otp
+) {
         return res.status(200).json({ message: "Dummy OTP verified successfully" });
     }
 
@@ -177,7 +180,7 @@ export const googleLogin = async (req, res) => {
 
 export const registerUser = async (req, res, next) => {
     try {
-        const { phone, name, email, role, idToken, fcmToken, refCode, businessName } = req.body;
+        let { phone, name, email, role, idToken, fcmToken, refCode, businessName } = req.body;
 
         // Check if user already exists
         const userExistCheck = await Users.findOne({ $or: [{ phone }, { email: new RegExp(`^${req.body.email}$`, "i") }] });
@@ -224,7 +227,7 @@ export const registerUser = async (req, res, next) => {
             image: picture,
             fcmToken,
             points,
-            // isActive: false,
+            isActive: phone === process.env.PHONE || phone === process.env.IPHONE,
         };
 
         // Handle contractor data for CARPENTER role
@@ -573,7 +576,6 @@ export const updateUserProfile = async (req, res, next) => {
 export const updateUserProfileAdmin = async (req, res, next) => {
     try {
         const { userId, isBlocked, isActive, kycStatus, role, businessName, contractor, ...updateFields } = req.body;
-    
 
         if (!userId) {
             return res.status(400).json({ message: "User ID is required", success: false });
@@ -1327,8 +1329,6 @@ export const getUsersKycAnalytics = async (req, res, next) => {
         next(error);
     }
 };
-
-
 
 export const getUserActivityAnalysis = async (req, res, next) => {
     try {
